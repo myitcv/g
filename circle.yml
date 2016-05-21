@@ -1,0 +1,7 @@
+dependencies:
+  override:
+    - echo "No dependencies to install"
+
+test:
+  override:
+    - GOPATH=$PWD/_vendor:$GOPATH go test -v ./...
