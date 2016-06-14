@@ -1,0 +1,19 @@
+language: go
+
+go:
+  - 1.6
+
+cache:
+  directories:
+    - $HOME/cache
+
+install:
+  - echo "Nothing to do"
+
+before_script:
+  - source ./scripts/commonEnv.sh
+  - source ./scripts/setupEnv.sh
+  - ./scripts/protobufInstall.sh
+
+script:
+  - ./scripts/runTests.sh
