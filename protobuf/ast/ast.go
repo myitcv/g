@@ -40,12 +40,13 @@ type File struct {
 
 // Message represents a proto message.
 type Message struct {
-	Position   Position // position of the "message" token
-	Name       string
-	Group      bool
-	Fields     []*Field
-	Extensions []*Extension
-	Oneofs     []*Oneof
+	Position       Position // position of the "message" token
+	Name           string
+	Group          bool
+	Fields         []*Field
+	Extensions     []*Extension
+	Oneofs         []*Oneof
+	ReservedFields []Reserved
 
 	Messages []*Message // includes groups
 	Enums    []*Enum
@@ -53,6 +54,11 @@ type Message struct {
 	ExtensionRanges [][2]int // extension ranges (inclusive at both ends)
 
 	Up interface{} // either *File or *Message
+}
+
+type Reserved struct {
+	Name       string
+	Start, End int
 }
 
 func (m *Message) Pos() Position { return m.Position }

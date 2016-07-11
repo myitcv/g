@@ -60,6 +60,11 @@ var parseTests = []parseTest{
 		`message_type { name: "TestMessage" field { name:"foo" label:LABEL_REQUIRED type:TYPE_INT32 number:1 } }`,
 	},
 	{
+		"ReservedFields",
+		"message TestMessage {\n  reserved 2, 15, 9 to 11;\nreserved \"foo\", \"bar\";\n}\n",
+		`message_type { name: "TestMessage" }`,
+	},
+	{
 		"ImplicitSyntaxIdentifier",
 		"message TestMessage {\n  required int32 foo = 1;\n}\n",
 		`message_type { name: "TestMessage"  field { name:"foo" label:LABEL_REQUIRED type:TYPE_INT32 number:1 } }`,
