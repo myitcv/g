@@ -452,6 +452,14 @@ func (p *parser) readMessageContents(msg *ast.Message) *parseError {
 				return err
 			}
 			msg.ExtensionRanges = append(msg.ExtensionRanges, r...)
+		case "reserved":
+			// reserved field name/tag list
+			p.back()
+			r, err := p.readReservedRange()
+			if err != nil {
+				return err
+			}
+			msg.ReservedFields = append(msg.ReservedFields, r...)
 		default:
 			// field; this token is required/optional/repeated,
 			// a primitive type, or a named type.
@@ -696,6 +704,79 @@ func (p *parser) readExtensionRange() ([][2]int, *parseError) {
 			}
 		}
 		rs = append(rs, [2]int{start, end})
+		if tok.value != "," && tok.value != ";" {
+			return nil, p.errorf(`got %q, want ",", ";" or "to"`, tok.value)
+		}
+		if tok.value == ";" {
+			break
+		}
+	}
+	return rs, nil
+}
+
+func (p *parser) readReservedRange() ([]ast.Reserved, *parseError) {
+	if err := p.readToken("reserved"); err != nil {
+		return nil, err
+	}
+
+	first := true
+	tagList := false
+	var rs []ast.Reserved
+
+	for {
+		// sequence of reserved values must be either all tags (ints)
+		// or all names (string). Tags may be ranges
+		nameOrTag := p.next()
+		if nameOrTag.err != nil {
+			return nil, nameOrTag.err
+		}
+		start, err := strconv.ParseInt(nameOrTag.value, 10, 32)
+		if first {
+			if err == nil {
+				tagList = true
+			}
+		} else {
+			if tagList && err != nil || !tagList && err == nil {
+				return nil, p.errorf("reserved lists must be all tags or all names, not a mix")
+			}
+		}
+
+		end := start
+		first = false
+
+		tok := p.next()
+		if tok.err != nil {
+			return nil, tok.err
+		}
+
+		if tok.value == "to" {
+			if !tagList {
+				return nil, p.errorf("reserved range used on name")
+			}
+
+			tok = p.next()
+			if tok.err != nil {
+				return nil, tok.err
+			}
+			end, err := strconv.ParseInt(tok.value, 10, 32)
+			if err != nil {
+				return nil, p.errorf("reserved range does not end with number")
+			}
+
+			if start > end {
+				return nil, p.errorf("bad reserved range order: %d > %d", start, end)
+			}
+
+			tok = p.next()
+			if tok.err != nil {
+				return nil, tok.err
+			}
+		}
+		if tagList {
+			rs = append(rs, ast.Reserved{Start: int(start), End: int(end)})
+		} else {
+			rs = append(rs, ast.Reserved{Name: nameOrTag.value})
+		}
 		if tok.value != "," && tok.value != ";" {
 			return nil, p.errorf(`got %q, want ",", ";" or "to"`, tok.value)
 		}
