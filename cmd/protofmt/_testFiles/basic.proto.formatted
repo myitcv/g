@@ -17,7 +17,7 @@ message Test1 {
 	
 	oneof oneof_group {
 		int32 oneof_int32_field = 50;
-		
+	
 	}
 	repeated int32 repeated_int32_field = 100;
 	

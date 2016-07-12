@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"testing"
 
+	protofmt "github.com/myitcv/g/protobuf/fmt"
+
 	. "gopkg.in/check.v1"
 )
 
@@ -40,14 +42,14 @@ func (t *MainTest) TestStdoutOutput(c *C) {
 
 	ob := bytes.NewBuffer(nil)
 
-	f := &formatter{
-		files:       []string{"_testFiles/basic.proto"},
-		importPaths: importPaths([]string{"_testFiles/", pbInclude}),
-
-		output: ob,
+	f := &protofmt.Formatter{
+		Output: ob,
 	}
 
-	f.fmt()
+	files := []string{"_testFiles/basic.proto"}
+	importPaths := importPaths([]string{"_testFiles/", pbInclude})
+
+	f.Fmt(files, importPaths)
 
 	cmpBytes, err := ioutil.ReadFile("_testFiles/basic.proto.formatted")
 	if err != nil {
@@ -57,7 +59,7 @@ func (t *MainTest) TestStdoutOutput(c *C) {
 	equal := bytes.Equal(ob.Bytes(), cmpBytes)
 
 	if !equal {
-		cmd := exec.Command("diff", "-wu", "-", "_testFiles/basic.proto.formatted")
+		cmd := exec.Command("diff", "-u", "-", "_testFiles/basic.proto.formatted")
 		cmd.Stdin = ob
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr

@@ -1,4 +1,4 @@
-package main
+package fmt
 
 import "github.com/myitcv/g/protobuf/ast"
 

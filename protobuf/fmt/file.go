@@ -1,4 +1,4 @@
-package main
+package fmt
 
 import (
 	"fmt"
@@ -13,7 +13,7 @@ import (
 // We lose spacing (or no spacing) between fields in a message; it should be at most 1 space
 // not an enforced 1 space;
 
-func (f *formatter) fmtFile(file *ast.File) {
+func (f *Formatter) FmtFile(file *ast.File) {
 	f.fmtSyntax(file.Syntax)
 	f.fmtPackage(file.Package)
 	f.fmtOptions(file.Options)
@@ -33,51 +33,51 @@ func (f *formatter) fmtFile(file *ast.File) {
 	f.fmtNodes(nodes)
 }
 
-func (f *formatter) fmtSyntax(syntax string) {
-	f.Printf("syntax = \"%v\";\n", syntax)
-	f.Println()
+func (f *Formatter) fmtSyntax(syntax string) {
+	f.printf("syntax = \"%v\";\n", syntax)
+	f.println()
 }
 
-func (f *formatter) fmtPackage(pkg []string) {
-	f.Printf("package %v;\n", strings.Join(pkg, "."))
+func (f *Formatter) fmtPackage(pkg []string) {
+	f.printf("package %v;\n", strings.Join(pkg, "."))
 
 	if len(pkg) > 0 {
-		f.Println()
+		f.println()
 	}
 }
 
-func (f *formatter) fmtOptions(options [][2]string) {
+func (f *Formatter) fmtOptions(options [][2]string) {
 	for _, o := range options {
-		f.Printf("option %v = %v;\n", o[0], o[1])
+		f.printf("option %v = %v;\n", o[0], o[1])
 	}
 
 	if len(options) > 0 {
-		f.Println()
+		f.println()
 	}
 }
 
-func (f *formatter) fmtImports(imports []string) {
+func (f *Formatter) fmtImports(imports []string) {
 	for _, i := range imports {
-		f.Printf("import \"%v\";\n", i)
+		f.printf("import \"%v\";\n", i)
 	}
 
 	if len(imports) > 0 {
-		f.Println()
+		f.println()
 	}
 }
 
-func (f *formatter) fmtNodes(nodes []ast.Node) {
+func (f *Formatter) fmtNodes(nodes []ast.Node) {
 	sort.Sort(nodeSort(nodes))
 
 	for i, n := range nodes {
 		if i != 0 {
-			f.Println()
+			f.println()
 		}
 		f.fmtNode(n)
 	}
 }
 
-func (f *formatter) fmtNode(node ast.Node) {
+func (f *Formatter) fmtNode(node ast.Node) {
 	switch node := node.(type) {
 	case *ast.Message:
 		f.fmtMessage(node)
@@ -94,8 +94,8 @@ func (f *formatter) fmtNode(node ast.Node) {
 	}
 }
 
-func (f *formatter) fmtService(svc *ast.Service) {
-	f.Printf("service %v {\n", svc.Name)
+func (f *Formatter) fmtService(svc *ast.Service) {
+	f.printf("service %v {\n", svc.Name)
 	f.indent++
 
 	var nodes []ast.Node
@@ -105,28 +105,28 @@ func (f *formatter) fmtService(svc *ast.Service) {
 	f.fmtNodes(nodes)
 
 	f.indent--
-	f.Println("}")
+	f.println("}")
 }
 
-func (f *formatter) fmtMethod(meth *ast.Method) {
-	f.Printf("rpc %v (%v) returns (%v)", meth.Name, meth.InTypeName, meth.OutTypeName)
+func (f *Formatter) fmtMethod(meth *ast.Method) {
+	f.printf("rpc %v (%v) returns (%v)", meth.Name, meth.InTypeName, meth.OutTypeName)
 	if len(meth.Options) > 0 {
-		f.NoIndentPrintf(" {\n")
+		f.noIndentPrintf(" {\n")
 		f.indent++
 
 		for _, o := range meth.Options {
-			f.Printf("option (%v) = %v;\n", o[0], o[1])
+			f.printf("option (%v) = %v;\n", o[0], o[1])
 		}
 
 		f.indent--
-		f.Println("}")
+		f.println("}")
 	} else {
-		f.NoIndentPrintf(";\n")
+		f.noIndentPrintf(";\n")
 	}
 }
 
-func (f *formatter) fmtMessage(message *ast.Message) {
-	f.Printf("message %v {\n", message.Name)
+func (f *Formatter) fmtMessage(message *ast.Message) {
+	f.printf("message %v {\n", message.Name)
 	f.indent++
 
 	var nodes []ast.Node
@@ -142,51 +142,64 @@ func (f *formatter) fmtMessage(message *ast.Message) {
 
 	f.fmtNodes(nodes)
 
+	// TODO: hack; if a one-of field was the last field in a message
+	// we need to close out the one-of group
+	if f.oneOf != nil {
+		f.oneOf = nil
+		f.println("}")
+	}
+
 	f.indent--
-	f.Println("}")
+	f.println("}")
 }
 
-func (f *formatter) fmtEnum(enum *ast.Enum) {
-	f.Printf("enum %v {\n", enum.Name)
+func (f *Formatter) fmtEnum(enum *ast.Enum) {
+	f.printf("enum %v {\n", enum.Name)
 	f.indent++
 
 	for _, v := range enum.Values {
-		f.Printf("%v = %v;\n", v.Name, v.Number)
+		f.printf("%v = %v;\n", v.Name, v.Number)
 	}
 
 	f.indent--
-	f.Println("}")
+	f.println("}")
 }
 
-func (f *formatter) fmtField(field *ast.Field) {
+func (f *Formatter) fmtField(field *ast.Field) {
 	if field.Oneof != nil && f.oneOf == nil {
 		f.oneOf = field.Oneof
-		f.Printf("oneof %v {\n", field.Oneof.Name)
-		f.indent++
+		f.printf("oneof %v {\n", field.Oneof.Name)
 	} else if field.Oneof == nil && f.oneOf != nil {
-		f.indent--
 		f.oneOf = nil
-		f.Println("}")
+		f.println("}")
+	}
+
+	if field.Oneof != nil {
+		f.indent++
 	}
 
 	if field.KeyTypeName != "" {
-		f.Printf("map<%v, %v> %v = %v", field.KeyTypeName, field.TypeName, field.Name, field.Tag)
+		f.printf("map<%v, %v> %v = %v", field.KeyTypeName, field.TypeName, field.Name, field.Tag)
 	} else if field.Repeated {
-		f.Printf("repeated %v %v = %v", field.TypeName, field.Name, field.Tag)
+		f.printf("repeated %v %v = %v", field.TypeName, field.Name, field.Tag)
 	} else {
-		f.Printf("%v %v = %v", field.TypeName, field.Name, field.Tag)
+		f.printf("%v %v = %v", field.TypeName, field.Name, field.Tag)
 	}
 
 	if len(field.Options) > 0 {
-		f.NoIndentPrintf(" [")
+		f.noIndentPrintf(" [")
 		for i, o := range field.Options {
 			if i > 0 {
-				f.NoIndentPrintf(", ")
+				f.noIndentPrintf(", ")
 			}
-			f.NoIndentPrintf("(%v)=%v", o[0], o[1])
+			f.noIndentPrintf("(%v)=%v", o[0], o[1])
 		}
-		f.NoIndentPrintf("];\n")
+		f.noIndentPrintf("];\n")
 	} else {
-		f.NoIndentPrintf(";\n")
+		f.noIndentPrintf(";\n")
+	}
+
+	if field.Oneof != nil {
+		f.indent--
 	}
 }
