@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	protofmt "github.com/myitcv/g/protobuf/fmt"
 )
 
 var (
@@ -37,14 +39,11 @@ func main() {
 		fatalf("Need to specify at least one file to parse")
 	}
 
-	f := &formatter{
-		files:       flag.Args(),
-		importPaths: fImportPaths,
-
-		output: os.Stdout,
+	f := &protofmt.Formatter{
+		Output: os.Stdout,
 	}
 
-	f.fmt()
+	f.Fmt(flag.Args(), fImportPaths)
 }
 
 func usage() {
