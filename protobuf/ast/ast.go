@@ -320,3 +320,60 @@ func (pos Position) String() string {
 	}
 	return fmt.Sprintf(":%d", pos.Line)
 }
+
+type Visitor interface {
+	Visit(node Node) (w Visitor)
+}
+
+func WalkFile(v Visitor, f *File) {
+	var nodes []Node
+	for _, m := range f.Messages {
+		nodes = append(nodes, m)
+	}
+	for _, e := range f.Enums {
+		nodes = append(nodes, e)
+	}
+	for _, s := range f.Services {
+		nodes = append(nodes, s)
+	}
+
+	sort.Sort(NodeSort(nodes))
+
+	for _, n := range nodes {
+		Walk(v, n)
+	}
+}
+
+func Walk(v Visitor, n Node) {
+	if v = v.Visit(n); v == nil {
+		return
+	}
+
+	switch n := n.(type) {
+	case *Message:
+		var nodes []Node
+		for _, m := range n.Messages {
+			nodes = append(nodes, m)
+		}
+		for _, e := range n.Enums {
+			nodes = append(nodes, e)
+		}
+		for _, f := range n.Fields {
+			nodes = append(nodes, f)
+		}
+
+		sort.Sort(NodeSort(nodes))
+
+		for _, n := range nodes {
+			Walk(v, n)
+		}
+	case *Enum:
+		for _, val := range n.Values {
+			Walk(v, val)
+		}
+	case *Service:
+		for _, meth := range n.Methods {
+			Walk(v, meth)
+		}
+	}
+}
