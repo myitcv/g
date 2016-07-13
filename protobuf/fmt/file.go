@@ -129,6 +129,11 @@ func (f *Formatter) fmtMessage(message *ast.Message) {
 	f.printf("message %v {\n", message.Name)
 	f.indent++
 
+	for _, o := range message.Options {
+		f.printf("option (%v) = %v;\n", o[0], o[1])
+
+	}
+
 	var nodes []ast.Node
 	for _, m := range message.Messages {
 		nodes = append(nodes, m)

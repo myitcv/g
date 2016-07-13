@@ -47,6 +47,7 @@ type Message struct {
 	Extensions     []*Extension
 	Oneofs         []*Oneof
 	ReservedFields []Reserved
+	Options        [][2]string
 
 	Messages []*Message // includes groups
 	Enums    []*Enum
