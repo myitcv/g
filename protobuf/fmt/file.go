@@ -67,7 +67,7 @@ func (f *Formatter) fmtImports(imports []string) {
 }
 
 func (f *Formatter) fmtNodes(nodes []ast.Node) {
-	sort.Sort(nodeSort(nodes))
+	sort.Sort(ast.NodeSort(nodes))
 
 	for i, n := range nodes {
 		if i != 0 {
