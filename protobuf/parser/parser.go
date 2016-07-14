@@ -435,6 +435,31 @@ func (p *parser) readMessageContents(msg *ast.Message) *parseError {
 				return err
 			}
 			nmsg.Up = msg
+		case "option":
+			// message option
+			if err := p.readToken("("); err != nil {
+				return err
+			}
+			tok := p.next()
+			if tok.err != nil {
+				return tok.err
+			}
+			key := tok.value
+			if err := p.readToken(")"); err != nil {
+				return err
+			}
+			if err := p.readToken("="); err != nil {
+				return err
+			}
+			tok = p.next()
+			if tok.err != nil {
+				return tok.err
+			}
+			value := tok.value
+			if err := p.readToken(";"); err != nil {
+				return err
+			}
+			msg.Options = append(msg.Options, [2]string{key, value})
 		case "enum":
 			// nested enum
 			p.back()

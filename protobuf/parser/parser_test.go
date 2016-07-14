@@ -60,6 +60,11 @@ var parseTests = []parseTest{
 		`message_type { name: "TestMessage" field { name:"foo" label:LABEL_REQUIRED type:TYPE_INT32 number:1 } }`,
 	},
 	{
+		"MessageOptions",
+		"message TestMessage {\n option (map_entry) = true;\n}\n",
+		`message_type { name: "TestMessage" }`,
+	},
+	{
 		"ReservedFields",
 		"message TestMessage {\n  reserved 2, 15, 9 to 11;\nreserved \"foo\", \"bar\";\n}\n",
 		`message_type { name: "TestMessage" }`,
