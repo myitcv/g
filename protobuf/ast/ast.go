@@ -38,6 +38,26 @@ type File struct {
 	Comments []*Comment // all the comments for this file, sorted by position
 }
 
+func (f *File) Nodes() []Node {
+	var nodes []Node
+
+	for _, v := range f.Messages {
+		nodes = append(nodes, v)
+	}
+	for _, v := range f.Enums {
+		nodes = append(nodes, v)
+	}
+	for _, v := range f.Services {
+		nodes = append(nodes, v)
+	}
+
+	// TODO support for Extensions? Probably not, it's proto2
+
+	sort.Stable(NodeSort(nodes))
+
+	return nodes
+}
+
 // Message represents a proto message.
 type Message struct {
 	Position       Position // position of the "message" token
@@ -62,6 +82,35 @@ type Reserved struct {
 	Start, End int
 }
 
+// Nodes returns a slice of the Nodes contained within this message definition
+// i.e. all the fields, enums etc, sorted by their Position.Offset
+func (m *Message) Nodes() []Node {
+	var nodes []Node
+
+	for _, v := range m.Fields {
+		nodes = append(nodes, v)
+	}
+
+	// TODO support for Extensions? Probably not, it's proto2
+
+	for _, v := range m.Oneofs {
+		nodes = append(nodes, v)
+	}
+
+	// TODO support for ReservedFields
+
+	for _, v := range m.Messages {
+		nodes = append(nodes, v)
+	}
+	for _, v := range m.Enums {
+		nodes = append(nodes, v)
+	}
+
+	sort.Stable(NodeSort(nodes))
+
+	return nodes
+}
+
 func (m *Message) Pos() Position { return m.Position }
 func (m *Message) File() *File {
 	for x := m.Up; ; {
@@ -82,6 +131,11 @@ type Oneof struct {
 	Name     string
 
 	Up *Message
+}
+
+func (o *Oneof) Pos() Position { return o.Position }
+func (o *Oneof) File() *File {
+	return o.Up.File()
 }
 
 // Field represents a field in a message.
