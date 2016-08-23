@@ -19,6 +19,8 @@ import (
 
 // TODO implement timeout for killing long-running process
 
+var fIgnorePaths ignorePaths
+
 var fQuiet = flag.Duration("q", time.Millisecond, "the duration of the 'quiet' window; format is 1s, 10us etc. Min 1 millisecond")
 var fPath = flag.String("p", "", "the path to watch; default is CWD [*]")
 var fFollow = flag.Bool("f", false, "whether to follow symlinks or not (recursively) [*]")
@@ -27,7 +29,27 @@ var fClearScreen = flag.Bool("c", true, "clear the screen before running the com
 var fInitial = flag.Bool("i", true, "run command at time zero; only applies when -d not supplied")
 var fTimeout = flag.Duration("t", 0, "the timeout after which a process is killed; not valid with -k")
 var fKill = flag.Bool("k", true, "whether to kill the running command on a new notification; ensures contiguous command calls")
-var fIgnoreDirs = flag.String("ignore", "", "comma-separated list of directories to ignore in the watch")
+
+const (
+	GitDir = ".git"
+)
+
+var GloballyIgnoredDirs = []string{GitDir}
+
+func init() {
+	flag.Var(&fIgnorePaths, "I", "Paths to ignore. Absolute paths are absolute to the path; relative paths can match anywhere in the tree")
+}
+
+type ignorePaths []string
+
+func (i *ignorePaths) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
+func (i *ignorePaths) String() string {
+	return fmt.Sprint(*i)
+}
 
 func showUsage() {
 	fmt.Fprintf(os.Stderr, "Command mode:\n\t%v [-q duration] [-p /path/to/watch] [-i] [-f] [-c] [-k] CMD ARG1 ARG2...\n\nDie mode:\n\t%v -d [-p /path/to/watch] [-f]\n\n", os.Args[0], os.Args[0])
@@ -42,16 +64,15 @@ func main() {
 
 	path := *fPath
 	if path == "" {
-		p, err := os.Getwd()
-		if err != nil {
-			log.Fatalf("Could not get CWD: %v\n", err)
-		}
-		path = p
-	} else {
-		_, err := os.Stat(path)
-		if err != nil {
-			log.Fatalf("Could not stat -p supplied path [%v]: %v\n", path, err)
-		}
+		path = "."
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		panic(err)
+	}
+	_, err = os.Stat(path)
+	if err != nil {
+		log.Fatalf("Could not stat -p supplied path [%v]: %v\n", path, err)
 	}
 
 	if !*fDie {
@@ -60,23 +81,6 @@ func main() {
 		}
 		if *fTimeout < 0 {
 			log.Fatalf("Command timeout duration [%v] must be positive\n", *fTimeout)
-		}
-	}
-
-	var toIgnore []string
-
-	if fIgnoreDirs != nil {
-		dirs := strings.Split(*fIgnoreDirs, ",")
-		for _, d := range dirs {
-			trimmed := strings.TrimSpace(d)
-			if trimmed == "" {
-				continue
-			}
-			abs, err := filepath.Abs(trimmed)
-			if err != nil {
-				// TODO again not swallow?
-			}
-			toIgnore = append(toIgnore, abs)
 		}
 	}
 
@@ -105,7 +109,8 @@ func main() {
 	w.initial = *fInitial
 	w.command = flag.Args()
 	w.clearScreen = *fClearScreen
-	w.ignoreDirs = toIgnore
+	w.ignorePaths = append(fIgnorePaths, GloballyIgnoredDirs...)
+	w.absPath = path
 
 	if *fDie {
 		w.watchOnce(path)
@@ -121,7 +126,8 @@ type watcher struct {
 	kill        bool
 	clearScreen bool
 	command     []string
-	ignoreDirs  []string
+	ignorePaths []string
+	absPath     string
 	initial     bool
 	timeout     time.Duration
 	quiet       time.Duration
@@ -159,10 +165,24 @@ WalkLoop:
 		flags := w.fileFlags
 		if s.IsDir() {
 			flags = w.dirFlags
-		}
-		for _, s := range w.ignoreDirs {
-			if strings.HasPrefix(walker.Path(), s) {
-				continue WalkLoop
+
+			for _, s := range w.ignorePaths {
+				rel, _ := filepath.Rel(w.absPath, walker.Path())
+
+				if filepath.IsAbs(s) {
+					nonAbs := strings.TrimPrefix(s, "/")
+
+					if nonAbs == rel {
+						walker.SkipDir()
+						continue WalkLoop
+					}
+
+				} else {
+					if strings.HasSuffix(rel, s) {
+						walker.SkipDir()
+						continue WalkLoop
+					}
+				}
 			}
 		}
 		err := w.iwatcher.AddWatch(walker.Path(), flags)
