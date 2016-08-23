@@ -1,8 +1,6 @@
 package fmt
 
 import (
-	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/myitcv/g/protobuf/ast"
@@ -19,18 +17,16 @@ func (f *Formatter) FmtFile(file *ast.File) {
 	f.fmtOptions(file.Options)
 	f.fmtImports(file.Imports)
 
-	var nodes []ast.Node
-	for _, m := range file.Messages {
-		nodes = append(nodes, m)
+	for _, n := range file.Nodes() {
+		switch n := n.(type) {
+		case *ast.Message:
+			f.fmtMessage(n)
+		case *ast.Enum:
+			f.fmtEnum(n)
+		case *ast.Service:
+			f.fmtService(n)
+		}
 	}
-	for _, e := range file.Enums {
-		nodes = append(nodes, e)
-	}
-	for _, s := range file.Services {
-		nodes = append(nodes, s)
-	}
-
-	f.fmtNodes(nodes)
 }
 
 func (f *Formatter) fmtSyntax(syntax string) {
@@ -66,43 +62,13 @@ func (f *Formatter) fmtImports(imports []string) {
 	}
 }
 
-func (f *Formatter) fmtNodes(nodes []ast.Node) {
-	sort.Sort(ast.NodeSort(nodes))
-
-	for i, n := range nodes {
-		if i != 0 {
-			f.println()
-		}
-		f.fmtNode(n)
-	}
-}
-
-func (f *Formatter) fmtNode(node ast.Node) {
-	switch node := node.(type) {
-	case *ast.Message:
-		f.fmtMessage(node)
-	case *ast.Enum:
-		f.fmtEnum(node)
-	case *ast.Field:
-		f.fmtField(node)
-	case *ast.Service:
-		f.fmtService(node)
-	case *ast.Method:
-		f.fmtMethod(node)
-	default:
-		panic(fmt.Errorf("No formatter for %T", node))
-	}
-}
-
 func (f *Formatter) fmtService(svc *ast.Service) {
 	f.printf("service %v {\n", svc.Name)
 	f.indent++
 
-	var nodes []ast.Node
 	for _, m := range svc.Methods {
-		nodes = append(nodes, m)
+		f.fmtMethod(m)
 	}
-	f.fmtNodes(nodes)
 
 	f.indent--
 	f.println("}")
@@ -134,18 +100,16 @@ func (f *Formatter) fmtMessage(message *ast.Message) {
 
 	}
 
-	var nodes []ast.Node
-	for _, m := range message.Messages {
-		nodes = append(nodes, m)
+	for _, n := range message.Nodes() {
+		switch n := n.(type) {
+		case *ast.Message:
+			f.fmtMessage(n)
+		case *ast.Enum:
+			f.fmtEnum(n)
+		case *ast.Field:
+			f.fmtField(n)
+		}
 	}
-	for _, e := range message.Enums {
-		nodes = append(nodes, e)
-	}
-	for _, field := range message.Fields {
-		nodes = append(nodes, field)
-	}
-
-	f.fmtNodes(nodes)
 
 	// TODO: hack; if a one-of field was the last field in a message
 	// we need to close out the one-of group
