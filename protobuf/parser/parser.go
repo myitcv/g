@@ -659,6 +659,16 @@ func (p *parser) readFieldOptions(f *ast.Field) *parseError {
 				return err
 			}
 			f.Packed = packed
+		case "deprecated":
+			f.HasDeprecated = true
+			if err := p.readToken("="); err != nil {
+				return err
+			}
+			deprecated, err := p.readBool()
+			if err != nil {
+				return err
+			}
+			f.Deprecated = deprecated
 		case "(":
 			// TODO test cases needed here
 			tok := p.next()

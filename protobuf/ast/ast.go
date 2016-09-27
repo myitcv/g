@@ -164,6 +164,9 @@ type Field struct {
 	HasPacked bool
 	Packed    bool
 
+	HasDeprecated bool
+	Deprecated    bool
+
 	Options [][2]string // slice of key/value pairs
 
 	Oneof *Oneof
