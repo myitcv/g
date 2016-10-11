@@ -15,6 +15,22 @@ type Node interface {
 	File() *File
 }
 
+type FileOrNode interface {
+	implFileOrNode()
+}
+
+type FileOrMessage interface {
+	implFileOrMessage()
+}
+
+type MessageOrExtension interface {
+	implMessageOrExtension()
+}
+
+type MessageOrField interface {
+	implMessageOrField()
+}
+
 // FileSet describes a set of proto files.
 type FileSet struct {
 	Files []*File
@@ -58,6 +74,9 @@ func (f *File) Nodes() []Node {
 	return nodes
 }
 
+func (f *File) implFileOrNode() {}
+func (f *File) implFileOrMessage() {}
+
 // Message represents a proto message.
 type Message struct {
 	Position       Position // position of the "message" token
@@ -74,8 +93,13 @@ type Message struct {
 
 	ExtensionRanges [][2]int // extension ranges (inclusive at both ends)
 
-	Up interface{} // either *File or *Message
+	Up FileOrMessage // either *File or *Message
 }
+
+func (m *Message) implFileOrNode()     {}
+func (m *Message) implFileOrMessage()     {}
+func (m *Message) implMessageOrExtension() {}
+func (m *Message) implMessageOrField() {}
 
 type Reserved struct {
 	Name       string
@@ -133,6 +157,8 @@ type Oneof struct {
 	Up *Message
 }
 
+func (o *Oneof) implFileOrNode() {}
+
 func (o *Oneof) Pos() Position { return o.Position }
 func (o *Oneof) File() *File {
 	return o.Up.File()
@@ -171,11 +197,24 @@ type Field struct {
 
 	Oneof *Oneof
 
-	Up Node // either *Message or *Extension
+	Up MessageOrExtension // either *Message or *Extension
 }
 
+func (f *Field) implFileOrNode()     {}
+func (f *Field) implMessageOrField() {}
+
 func (f *Field) Pos() Position { return f.Position }
-func (f *Field) File() *File   { return f.Up.File() }
+func (f *Field) File() *File   {
+	switch up := f.Up.(type) {
+	case *Message:
+		return up.File()
+	case *Extension:
+		return up.File()
+	default:
+		log.Panicf("internal error: Field.Up is a %T", up)
+		return nil
+	}
+}
 
 type FieldType int8
 
@@ -231,8 +270,10 @@ type Enum struct {
 	Name     string
 	Values   []*EnumValue
 
-	Up interface{} // either *File or *Message
+	Up FileOrMessage // either *File or *Message
 }
+
+func (e *Enum) implFileOrNode() {}
 
 func (enum *Enum) Pos() Position { return enum.Position }
 func (enum *Enum) File() *File {
@@ -256,6 +297,8 @@ type EnumValue struct {
 	Up *Enum
 }
 
+func (e *EnumValue) implFileOrNode() {}
+
 func (ev *EnumValue) Pos() Position { return ev.Position }
 func (ev *EnumValue) File() *File   { return ev.Up.File() }
 
@@ -268,6 +311,8 @@ type Service struct {
 
 	Up *File
 }
+
+func (s *Service) implFileOrNode() {}
 
 func (s *Service) Pos() Position { return s.Position }
 func (s *Service) File() *File   { return s.Up }
@@ -288,6 +333,8 @@ type Method struct {
 	Up *Service
 }
 
+func (m *Method) implFileOrNode() {}
+
 func (m *Method) Pos() Position { return m.Position }
 func (m *Method) File() *File   { return m.Up.Up }
 
@@ -300,8 +347,11 @@ type Extension struct {
 
 	Fields []*Field
 
-	Up interface{} // either *File or *Message or ...
+	Up FileOrMessage // either *File or *Message or ...
 }
+
+func (e *Extension) implFileOrNode() {}
+func (e *Extension) implMessageOrExtension() {}
 
 func (e *Extension) Pos() Position { return e.Position }
 func (e *Extension) File() *File {
@@ -321,6 +371,8 @@ type Comment struct {
 	Start, End Position // position of first and last "//"
 	Text       []string
 }
+
+func (c *Comment) implFileOrNode() {}
 
 func (c *Comment) Pos() Position { return c.Start }
 
