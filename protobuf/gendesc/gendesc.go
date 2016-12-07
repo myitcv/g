@@ -188,7 +188,7 @@ func genField(f *ast.Field) (*pb.FieldDescriptorProto, *pb.DescriptorProto, erro
 					Tag:      2,
 				},
 			},
-			Up: f.Up,
+			Up: f.Up.(*ast.Message),
 		}
 		vmsg.Fields[0].Up = vmsg
 		vmsg.Fields[1].Up = vmsg
