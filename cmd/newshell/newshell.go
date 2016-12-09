@@ -1,8 +1,12 @@
+// Copyright (c) 2016 Paul Jolly <paul@myitcv.org.uk>, all rights reserved.
+// Use of this document is governed by a license found in the LICENSE document.
+
 package main
 
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -10,10 +14,16 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
 var fP = flag.Int64("p", -1, "the PID of the process to walk for bash sub-processes")
+
+const (
+	GoVersion       = "GOVERSION"
+	MustChangeToDir = "MUST_CHANGE_TO_DIR"
+)
 
 func main() {
 	flag.Parse()
@@ -64,15 +74,55 @@ func main() {
 			}
 		}
 
-		n, err := os.Readlink(fmt.Sprintf("/proc/%v/cwd", bestPid))
-		if err != nil {
-			log.Fatalf("Could not read cwd of best pid %v: %v", bestPid, err)
+		if bestPid != 0 {
+			n, err := os.Readlink(fmt.Sprintf("/proc/%v/cwd", bestPid))
+			if err != nil {
+				log.Fatalf("Could not read cwd of best pid %v: %v", bestPid, err)
+			}
+
+			// we don't care if this fails
+			os.Setenv(MustChangeToDir, n)
+
+			gv, err := goVersion(bestPid)
+			if err == nil {
+				os.Setenv(GoVersion, gv)
+			}
 		}
 
-		// we don't care if this fails
-		os.Setenv("MUST_CHANGE_TO_DIR", n)
 	}
 
 	cmd := flag.Args()
 	syscall.Exec(cmd[0], cmd, os.Environ())
+}
+
+func goVersion(pid uint64) (string, error) {
+	mi, err := os.Open(fmt.Sprintf("/proc/%d/mountinfo", pid))
+	if err != nil {
+		return "", err
+	}
+	defer mi.Close()
+
+	root := ""
+
+	sc := bufio.NewScanner(mi)
+
+	for sc.Scan() {
+		line := sc.Text()
+		parts := strings.Fields(line)
+
+		if parts[4] == "/home/myitcv/gos" {
+			root = parts[3]
+			break
+		}
+	}
+
+	if strings.HasPrefix(root, "/home/myitcv/.gos/") {
+		return strings.TrimPrefix(root, "/home/myitcv/.gos/"), nil
+	}
+
+	if root == "/home/myitcv/dev/go" {
+		return "gotip", nil
+	}
+
+	return "", errors.New("Not mounted or unknown error")
 }

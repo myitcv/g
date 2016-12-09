@@ -11,8 +11,8 @@ install:
   - echo "Nothing to do"
 
 before_script:
-  - source ./scripts/commonEnv.sh
-  - source ./scripts/setupEnv.sh
+  - source ./scripts/commonEnv.bash
+  - source ./scripts/setupEnv.bash
   - ./scripts/protobufInstall.sh
 
 script:
