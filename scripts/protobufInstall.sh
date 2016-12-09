@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
-source "${BASH_SOURCE%/*}/common.sh"
+# Copyright (c) 2016 Paul Jolly <paul@myitcv.org.uk>, all rights reserved.
+# Use of this document is governed by a license found in the LICENSE document.
+
+source "${BASH_SOURCE%/*}/common.bash"
 
 only_run_on_ci_server
 

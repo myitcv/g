@@ -1,3 +1,6 @@
+// Copyright (c) 2016 Paul Jolly <paul@myitcv.org.uk>, all rights reserved.
+// Use of this document is governed by a license found in the LICENSE document.
+
 package main
 
 import (
@@ -184,10 +187,10 @@ WalkLoop:
 					}
 				}
 			}
-		}
-		err := w.iwatcher.AddWatch(walker.Path(), flags)
-		if err != nil {
-			// TODO anything better to do that just swallow it?
+			err := w.iwatcher.AddWatch(walker.Path(), flags)
+			if err != nil {
+				// TODO anything better to do that just swallow it?
+			}
 		}
 	}
 	return nil

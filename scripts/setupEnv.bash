@@ -1,3 +1,6 @@
+# Copyright (c) 2016 Paul Jolly <paul@myitcv.org.uk>, all rights reserved.
+# Use of this document is governed by a license found in the LICENSE document.
+
 only_run_on_ci_server
 
 export PROTOBUF_VERSION="3.0.0-beta-2"
