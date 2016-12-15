@@ -592,7 +592,7 @@ parseFromFieldName:
 			Position: p.cur.astPosition(),
 			Name:     f.Name,
 			Group:    true,
-			Up:       f.Up,
+			Up:       f.Up.(*ast.Message),
 		}
 		if err := p.readMessageContents(group); err != nil {
 			return err
