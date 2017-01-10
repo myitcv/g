@@ -1,11 +1,16 @@
+// concsh allows you to concurrently run commands from your shell.
 package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -16,8 +21,12 @@ import (
 //
 // there is no shell evaluation of arguments
 //
-// TODO could support shell evalulation?
+// TODO add ability to limit concurrency (probably not worth it for things like git which are most
+// likely to be network-bounded)
+// TODO could support shell evalulation of lines (command line version already covered?)?
 // TODO improve panics; some situations we might be able to better detect/handle?
+// TODO add some mode whereby commands are executed only if all commands are valid (means
+// that stdin read commands not executed until stdin is closed)
 //
 // exit code is 0 if all commands succeed without error; one of the non-zero exit codes otherwise
 
@@ -32,36 +41,64 @@ type outLine struct {
 }
 
 func main() {
+	log.SetOutput(os.Stderr)
+	log.SetPrefix(os.Args[0] + ": ")
+
+	flag.Usage = usage
+
+	flag.Parse()
+
+	var argSets [][]string
+
 	s := 0
-
-	for i, v := range os.Args {
-		if v == "--" {
-			s = i
-			break
-		}
-	}
-
-	results := make(chan result)
 	nr := 0
+	results := make(chan result)
 
-	var args []string
+	if len(os.Args) == 1 {
+		// read from stdin
+		sc := bufio.NewScanner(os.Stdin)
+		line := 1
 
-	for _, v := range os.Args[s+1:] {
-		if v == "---" {
+		for sc.Scan() {
+			args, err := split(sc.Text())
+			if err != nil {
+				infof("could not parse command on line %v: %v", line, err)
+			}
+
 			nr += runCmd(args, results)
-			args = nil
-		} else {
-			args = append(args, v)
+			line++
 		}
-	}
+		if err := sc.Err(); err != nil {
+			fatalf("unable to read from stdin: %v", err)
+		}
+	} else {
+		for i, v := range os.Args {
+			if v == "--" {
+				s = i
+				break
+			}
+		}
 
-	// in case we did not have a final ---
-	nr += runCmd(args, results)
+		var args []string
 
-	if nr == 0 {
-		fmt.Println("No commands to execute")
-		return
+		for _, v := range os.Args[s+1:] {
+			if v == "---" {
+				argSets = append(argSets, args)
+				args = nil
+			} else {
+				args = append(args, v)
+			}
+		}
+
+		// in case we did not have a final ---
+		argSets = append(argSets, args)
+
 	}
+	// nr += runCmd(args, results)
+	// if nr == 0 {
+	// 	fmt.Println("No commands to execute")
+	// 	return
+	// }
 
 	exitCode := 0
 
@@ -88,6 +125,19 @@ func main() {
 	os.Exit(exitCode)
 }
 
+func usage() {
+	fmt.Fprintln(os.Stderr, `concsh allows you to concurrently run commands from your shell
+
+Usage:
+	concsh -- comand1 arg1_1 arg1_2 ... --- command2 arg2_1 arg 2_2 ... --- ...
+	concsh
+
+In the case no arguments are provided, concsh will read the commands to execute from stdin, one per line
+	`)
+
+	flag.PrintDefaults()
+}
+
 func runCmd(args []string, results chan result) int {
 	res := 0
 
@@ -97,6 +147,56 @@ func runCmd(args []string, results chan result) int {
 	}
 
 	return res
+}
+
+// based on the nice clean, algorithm in go generate
+// https://github.com/golang/go/blob/c1730ae424449f38ea4523207a56c23b2536a5de/src/cmd/go/generate.go#L292
+
+func split(line string) ([]string, error) {
+	var words []string
+
+Words:
+	for {
+		line = strings.TrimLeft(line, " \t")
+		if len(line) == 0 {
+			break
+		}
+		if line[0] == '"' {
+			for i := 1; i < len(line); i++ {
+				c := line[i] // Only looking for ASCII so this is OK.
+				switch c {
+				case '\\':
+					if i+1 == len(line) {
+						return nil, fmt.Errorf("bad backslash")
+					}
+					i++ // Absorb next byte (If it's a multibyte we'll get an error in Unquote).
+
+				case '"':
+					word, err := strconv.Unquote(line[0 : i+1])
+					if err != nil {
+						return nil, fmt.Errorf("bad quoted string")
+					}
+					words = append(words, word)
+					line = line[i+1:]
+
+					// Check the next character is space or end of line.
+					if len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+						return nil, fmt.Errorf("expect space after quoted argument")
+					}
+					continue Words
+				}
+			}
+			return nil, fmt.Errorf("mismatched quoted string")
+		}
+		i := strings.IndexAny(line, " \t")
+		if i < 0 {
+			i = len(line)
+		}
+		words = append(words, line[0:i])
+		line = line[i:]
+	}
+
+	return words, nil
 }
 
 func runCmdImpl(args []string, results chan result) {
@@ -201,4 +301,12 @@ func read(in io.ReadCloser, res chan string, done chan struct{}) {
 	}
 
 	done <- struct{}{}
+}
+
+func fatalf(format string, args ...interface{}) {
+	log.Fatalf(format, args...)
+}
+
+func infof(format string, args ...interface{}) {
+	log.Printf(format, args...)
 }
