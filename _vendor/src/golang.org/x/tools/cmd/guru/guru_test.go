@@ -230,6 +230,7 @@ func TestGuru(t *testing.T) {
 		"testdata/src/reflection/main.go",
 		"testdata/src/what/main.go",
 		"testdata/src/whicherrs/main.go",
+		"testdata/src/softerrs/main.go",
 		// JSON:
 		// TODO(adonovan): most of these are very similar; combine them.
 		"testdata/src/calls-json/main.go",
@@ -242,6 +243,12 @@ func TestGuru(t *testing.T) {
 		"testdata/src/referrers-json/main.go",
 		"testdata/src/what-json/main.go",
 	} {
+		if filename == "testdata/src/referrers/main.go" && runtime.GOOS == "plan9" {
+			// Disable this test on plan9 since it expects a particular
+			// wording for a "no such file or directory" error.
+			continue
+		}
+
 		json := strings.Contains(filename, "-json/")
 		queries := parseQueries(t, filename)
 		golden := filename + "lden"

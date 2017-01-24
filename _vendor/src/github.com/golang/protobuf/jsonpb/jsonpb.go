@@ -585,7 +585,14 @@ func (u *Unmarshaler) unmarshalValue(target reflect.Value, inputValue json.RawMe
 		case "Any":
 			return fmt.Errorf("unmarshaling Any not supported yet")
 		case "Duration":
-			unq, err := strconv.Unquote(string(inputValue))
+			ivStr := string(inputValue)
+			if ivStr == "null" {
+				target.Field(0).SetInt(0)
+				target.Field(1).SetInt(0)
+				return nil
+			}
+
+			unq, err := strconv.Unquote(ivStr)
 			if err != nil {
 				return err
 			}
@@ -600,7 +607,14 @@ func (u *Unmarshaler) unmarshalValue(target reflect.Value, inputValue json.RawMe
 			target.Field(1).SetInt(ns)
 			return nil
 		case "Timestamp":
-			unq, err := strconv.Unquote(string(inputValue))
+			ivStr := string(inputValue)
+			if ivStr == "null" {
+				target.Field(0).SetInt(0)
+				target.Field(1).SetInt(0)
+				return nil
+			}
+
+			unq, err := strconv.Unquote(ivStr)
 			if err != nil {
 				return err
 			}
@@ -608,11 +622,8 @@ func (u *Unmarshaler) unmarshalValue(target reflect.Value, inputValue json.RawMe
 			if err != nil {
 				return fmt.Errorf("bad Timestamp: %v", err)
 			}
-			ns := t.UnixNano()
-			s := ns / 1e9
-			ns %= 1e9
-			target.Field(0).SetInt(s)
-			target.Field(1).SetInt(ns)
+			target.Field(0).SetInt(int64(t.Unix()))
+			target.Field(1).SetInt(int64(t.Nanosecond()))
 			return nil
 		}
 	}
@@ -812,10 +823,21 @@ func (w *errWriter) write(str string) {
 // The easiest way to sort them in some deterministic order is to use fmt.
 // If this turns out to be inefficient we can always consider other options,
 // such as doing a Schwartzian transform.
+//
+// Numeric keys are sorted in numeric order per
+// https://developers.google.com/protocol-buffers/docs/proto#maps.
 type mapKeys []reflect.Value
 
 func (s mapKeys) Len() int      { return len(s) }
 func (s mapKeys) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 func (s mapKeys) Less(i, j int) bool {
+	if k := s[i].Kind(); k == s[j].Kind() {
+		switch k {
+		case reflect.Int32, reflect.Int64:
+			return s[i].Int() < s[j].Int()
+		case reflect.Uint32, reflect.Uint64:
+			return s[i].Uint() < s[j].Uint()
+		}
+	}
 	return fmt.Sprint(s[i].Interface()) < fmt.Sprint(s[j].Interface())
 }

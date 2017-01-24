@@ -32,6 +32,10 @@
 		{
 			"pos": "testdata/src/definition-json/main.go:30:8",
 			"text": "\tvar _ lib.Nonesuch // @definition qualified-nomember \"Nonesuch\""
+		},
+		{
+			"pos": "testdata/src/definition-json/main.go:63:2",
+			"text": "\tlib.Type // @definition embedded-other-pkg \"Type\""
 		}
 	]
 }
@@ -110,6 +114,19 @@
 		{
 			"pos": "testdata/src/referrers/ext_test.go:10:7",
 			"text": "\t_ = (lib.Type).Method // ref from external test package"
+		}
+	]
+}
+{
+	"package": "what-json",
+	"refs": [
+		{
+			"pos": "testdata/src/what-json/main.go:13:7",
+			"text": "var _ lib.Var // @what pkg \"lib\""
+		},
+		{
+			"pos": "testdata/src/what-json/main.go:14:8",
+			"text": "type _ lib.T"
 		}
 	]
 }
