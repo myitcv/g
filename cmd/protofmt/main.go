@@ -8,13 +8,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/myitcv/g/protobuf"
 	protofmt "github.com/myitcv/g/protobuf/fmt"
 )
 
 var (
 	fHelpShort   = flag.Bool("h", false, "Show usage text (same as --help).")
 	fHelpLong    = flag.Bool("help", false, "Show usage text (same as -h).")
-	fImportPaths = importPaths([]string{"."})
+	fImportPaths = protobuf.ImportPaths([]string{"."})
 )
 
 func init() {

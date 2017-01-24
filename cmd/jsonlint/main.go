@@ -4,115 +4,238 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
+	_log "log"
 	"os"
-	"strconv"
-	"strings"
+	"path/filepath"
 )
 
-var fFix = flag.Bool("f", false, "fix the files passed as arguments")
-var fSpaces = new(spaces)
+var (
+	fVerbose = flag.Bool("v", false, "log interesting messages")
+	fFix     = flag.Bool("f", false, "fix the files passed as arguments")
+	fIndent  = flag.String("indent", "\t", "the indent string")
+	fPrefix  = flag.String("prefix", "", "the prefix string")
+)
 
-func init() {
-	flag.Var(fSpaces, "s", "indent using the provided number of spaces")
+type Config struct {
+	Prefix string
+	Indent string
 }
 
-type spaces struct {
-	number *int
-}
+const (
+	ConfigFileName = ".jsonlintconfig.json"
+)
 
-func (s *spaces) String() string {
-	return fmt.Sprintf("%v", s.number)
-}
+const (
+	logPrefix = ""
+	logFlags  = 0
+)
 
-func (s *spaces) Get() interface{} {
-	return s.number
-}
-
-func (s *spaces) Set(toSet string) error {
-	i, err := strconv.Atoi(toSet)
-	if err != nil {
-		return err
-	}
-	s.number = &i
-	return nil
-}
+var config Config
+var log = _log.New(os.Stdout, logPrefix, logFlags)
+var elog = _log.New(os.Stderr, logPrefix, logFlags)
 
 func main() {
+	log.SetFlags(0)
+	log.SetPrefix("")
 	flag.Parse()
 
-	var files []*os.File
+	files := flag.Args()
 
-	for _, fName := range flag.Args() {
-		f, err := os.Open(fName)
-		if err != nil {
+	if len(files) == 0 {
+		files = []string{os.Stdin.Name()}
+	}
+
+	f := &formatter{}
+
+	for _, file := range files {
+		f.file = file
+		f.format()
+	}
+
+	if f.failed {
+		os.Exit(1)
+	}
+}
+
+type formatter struct {
+	failed bool
+	file   string
+}
+
+var procFile = fmt.Errorf("error handling file")
+
+func (f *formatter) failf(format string, args ...interface{}) {
+	f.failed = true
+	var fn string
+
+	if f.file == os.Stdin.Name() {
+		fn = "<stdin>"
+	} else {
+		fn = f.file
+	}
+
+	elog.Printf("%v: %v\n", fn, fmt.Sprintf(format, args...))
+
+	panic(procFile)
+}
+
+func (f *formatter) format() {
+	var file *os.File
+	var err error
+
+	defer func() {
+		if err := recover(); err != nil && err != procFile {
 			panic(err)
 		}
 
-		files = append(files, f)
-	}
-	if len(files) == 0 {
-		files = append(files, os.Stdin)
-	}
+		if file != nil {
+			file.Close()
+		}
+	}()
 
-	fail := false
-	for _, file := range files {
-		dec := json.NewDecoder(file)
-
-		var j interface{}
-		err := dec.Decode(&j)
+	if f.file == os.Stdin.Name() {
+		file = os.Stdin
+	} else {
+		file, err = os.Open(f.file)
 		if err != nil {
-			fmt.Printf("%v does not contain valid JSON: %v\n", file.Name(), err)
-			fail = true
-			continue
+			f.failf("unable to open: %v", err)
 		}
+	}
 
-		indent := "\t"
-		if fSpaces.number != nil {
-			indent = strings.Repeat(" ", *fSpaces.number)
-		}
+	var r io.Reader
+	var orig []byte
 
-		b, err := json.MarshalIndent(j, "", indent)
+	if !*fFix {
+		cs, err := ioutil.ReadAll(file)
 		if err != nil {
-			fmt.Printf("%v could not be formatted\n", file.Name())
-			fail = true
-			continue
+			f.failf("unable to read: %v", err)
 		}
 
-		b = append(b, []byte("\n")...)
+		orig = cs
+		r = bytes.NewBuffer(orig)
+	} else {
+		r = file
+	}
 
-		if *fFix {
-			if file == os.Stdin {
-				_, err = os.Stdout.Write(b)
-			} else {
-				err = ioutil.WriteFile(file.Name(), b, 0644)
-			}
-			if err != nil {
-				fmt.Printf("Could not write formatted JSON to %v\n", file.Name())
-				fail = true
-				continue
-			}
+	dec := json.NewDecoder(r)
+
+	var j interface{}
+	err = dec.Decode(&j)
+
+	if *fFix {
+		clErr := file.Close()
+		if clErr != nil {
+			f.failf("unable to close: %v", err)
+		}
+	}
+
+	if err != nil {
+		f.failf("does not contain valid JSON: %v", err)
+	}
+
+	c := deriveConfig(file)
+
+	if *fVerbose {
+		log.Printf("For file %v using config %#v\n", file.Name(), c)
+	}
+
+	b, err := json.MarshalIndent(j, c.Prefix, c.Indent)
+	if err != nil {
+		f.failf("could not be formatted: %v", err)
+	}
+
+	b = append(b, []byte("\n")...)
+
+	if *fFix {
+		if file == os.Stdin {
+			_, err = os.Stdout.Write(b)
 		} else {
-			_, err := file.Seek(0, 0)
-			if err != nil {
-				panic(err)
-			}
-			contents, err := ioutil.ReadAll(file)
-			if err != nil {
-				panic(err)
-			}
-			if string(contents) != string(b) {
-				fmt.Printf("%v is not formatted\n", file.Name())
-				fail = true
-				continue
-			}
+			err = ioutil.WriteFile(file.Name(), b, 0644)
+		}
+		if err != nil {
+			f.failf("could not write formatted JSON back to file: %v", err)
+		}
+	} else {
+		if !bytes.Equal(orig, b) {
+			f.failf("is not well-formatted")
 		}
 	}
+}
 
-	if fail {
-		os.Exit(1)
+func deriveConfig(file *os.File) (res Config) {
+	var err error
+
+	res.Indent = *fIndent
+	res.Prefix = *fPrefix
+
+	var dir string
+
+	if file == os.Stdin {
+		d, err := os.Getwd()
+		if err != nil {
+			elog.Fatalf("Could not get working directory: %v", err)
+		}
+
+		dir = d
+	} else {
+		abs, err := filepath.Abs(file.Name())
+		if err != nil {
+			elog.Fatalf("Could not get absolute path to %v: %v", file.Name(), err)
+		}
+
+		dir = filepath.Dir(abs)
 	}
+
+	var fi *os.File
+
+	for {
+		fp := filepath.Join(dir, ConfigFileName)
+
+		if *fVerbose {
+			log.Printf("Checking for config file %v\n", fp)
+		}
+
+		fi, err = os.Open(fp)
+
+		if err == nil {
+			break
+		}
+
+		p := filepath.Dir(dir)
+
+		if p == dir {
+			break
+		}
+
+		dir = p
+	}
+
+	if fi == nil {
+		return
+	}
+
+	if *fVerbose {
+		log.Printf("Found config file at %v\n", fi.Name())
+	}
+
+	dec := json.NewDecoder(fi)
+	err = dec.Decode(&res)
+
+	clErr := fi.Close()
+
+	if clErr != nil {
+		elog.Fatalf("Could not close file %v: %v", fi.Name(), clErr)
+	}
+
+	if err != nil {
+		elog.Fatalf("Unable to decode config from %v: %v", fi.Name(), err)
+	}
+
+	return res
 }

@@ -1,3 +1,5 @@
+// golistalldeps transitively lists all dependencies (package, test and xtest) of specified packages in a format
+// identical to go list
 package main
 
 import (
@@ -52,6 +54,12 @@ func main() {
 			}
 
 			for _, d := range p.TestImports {
+				if _, ok := pkgInfo[d]; !ok {
+					pkgs = append(pkgs, d)
+				}
+			}
+
+			for _, d := range p.XTestImports {
 				if _, ok := pkgInfo[d]; !ok {
 					pkgs = append(pkgs, d)
 				}

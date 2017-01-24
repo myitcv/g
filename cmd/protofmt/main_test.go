@@ -50,7 +50,7 @@ func (t *MainTest) TestStdoutOutput(c *C) {
 	}
 
 	files := []string{"_testFiles/basic.proto"}
-	importPaths := importPaths([]string{"_testFiles/", pbInclude})
+	importPaths := []string{"_testFiles/", pbInclude}
 
 	f.Fmt(files, importPaths)
 

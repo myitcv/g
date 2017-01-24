@@ -27,14 +27,14 @@ func debugf(format string, args ...interface{}) {
 	}
 }
 
-func ParseFiles(filenames []string, importPaths []string) (*ast.FileSet, error) {
+func ParseFiles(filenames []string, paths []string) (*ast.FileSet, error) {
 	// Force importPaths to have at least one element.
-	if len(importPaths) == 0 {
-		importPaths = []string{"."}
+	if len(paths) == 0 {
+		paths = []string{"."}
 	}
 
 	var absImportPaths []string
-	for _, p := range importPaths {
+	for _, p := range paths {
 		f, err := filepath.Abs(p)
 		if err != nil {
 			// TODO could return a better error here
@@ -100,7 +100,7 @@ func ParseFiles(filenames []string, importPaths []string) (*ast.FileSet, error) 
 			}
 		}
 		if buf == nil {
-			return nil, fmt.Errorf("file not found in import paths: %s, paths %v", filename, importPaths)
+			return nil, fmt.Errorf("file not found in import paths: %s, paths %v", filename, paths)
 		}
 
 		p := newParser(filename, string(buf))

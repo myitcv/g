@@ -1,16 +1,20 @@
 ### `concsh`
 
-Concurrently run commands from your shell.
+<!-- REPLACE: go list -f '{{.Doc}}' github.com/myitcv/g/cmd/concsh -->
+`concsh` allows you to concurrently run commands from your shell.
+<!-- END -->
 
 ```bash
 go get github.com/myitcv/g/cmd/concsh
 ```
 
-### Invocation
+### Usage
 
-```bash
+<!-- CODE: concsh --help -->
+```
 concsh -- COMMAND1 ARGS1... --- COMMAND2 ARGS2... --- ...
 ```
+<!-- END -->
 
 All args after the first `--` are then considered as a `---`-separated (notice the extra `-`)
 list of commands to be run concurrently. Output from each command (both stdout and stderr)
