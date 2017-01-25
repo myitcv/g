@@ -4,15 +4,19 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/sha1"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"hash"
 	"io"
 	"io/ioutil"
 	_log "log"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 var (
@@ -51,27 +55,63 @@ func main() {
 		files = []string{os.Stdin.Name()}
 	}
 
-	f := &formatter{}
+	nf := runtime.NumCPU()
 
-	for _, file := range files {
-		f.file = file
-		f.format()
+	formatters := make(chan *formatter, runtime.NumCPU())
+
+	for i := 0; i < nf; i++ {
+		formatters <- &formatter{}
 	}
 
-	if f.failed {
+	failed := make(chan bool)
+
+	go func() {
+		for _, file := range files {
+			f := <-formatters
+
+			go func(fn string, f *formatter) {
+				f.file = fn
+				err := f.format()
+				if err != nil {
+					elog.Print(err)
+					failed <- true
+				}
+
+				formatters <- f
+			}(file, f)
+		}
+
+		// now we need to count the formatters back in
+		for i := 0; i < nf; i++ {
+			<-formatters
+		}
+
+		// then signal that we're done
+		close(failed)
+	}()
+
+	errCount := 0
+
+	for {
+		if _, ok := <-failed; !ok {
+			break
+		}
+
+		errCount++
+	}
+
+	if errCount > 0 {
 		os.Exit(1)
 	}
 }
 
 type formatter struct {
-	failed bool
-	file   string
+	file string
 }
 
 var procFile = fmt.Errorf("error handling file")
 
 func (f *formatter) failf(format string, args ...interface{}) {
-	f.failed = true
 	var fn string
 
 	if f.file == os.Stdin.Name() {
@@ -80,18 +120,16 @@ func (f *formatter) failf(format string, args ...interface{}) {
 		fn = f.file
 	}
 
-	elog.Printf("%v: %v\n", fn, fmt.Sprintf(format, args...))
-
-	panic(procFile)
+	panic(fmt.Errorf("%v: %v\n", fn, fmt.Sprintf(format, args...)))
 }
 
-func (f *formatter) format() {
+func (f *formatter) format() (retErr error) {
 	var file *os.File
 	var err error
 
 	defer func() {
-		if err := recover(); err != nil && err != procFile {
-			panic(err)
+		if err := recover(); err != nil {
+			retErr = err.(error)
 		}
 
 		if file != nil {
@@ -108,37 +146,83 @@ func (f *formatter) format() {
 		}
 	}
 
-	var r io.Reader
-	var orig []byte
+	var r io.Reader = file
+	var orig hash.Hash
 
 	if !*fFix {
-		cs, err := ioutil.ReadAll(file)
-		if err != nil {
-			f.failf("unable to read: %v", err)
-		}
-
-		orig = cs
-		r = bytes.NewBuffer(orig)
-	} else {
-		r = file
+		// we have to work out whether the file is formatted or not
+		orig = sha1.New()
+		r = io.TeeReader(file, orig)
 	}
 
-	dec := json.NewDecoder(r)
+	// for a bit of fun let's use a pipe...
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer file.Close()
+
+		r := bufio.NewReader(r)
+		skip := false
+
+		for {
+			var err error
+
+			done := false
+			write := true
+			line, rerr := r.ReadSlice('\n')
+
+			if rerr == nil {
+				if !skip && bytes.HasPrefix(line, []byte("//")) {
+					write = false
+				}
+
+				skip = false
+			} else if rerr == bufio.ErrBufferFull {
+				if !skip && bytes.HasPrefix(line, []byte("//")) {
+					skip = true
+					write = false
+				}
+			} else if rerr == io.EOF {
+				if skip {
+					write = false
+				}
+
+				done = true
+			} else {
+				pw.CloseWithError(fmt.Errorf("unable to read input: %v", err))
+				return
+			}
+
+			if write {
+				start := 0
+
+				for start < len(line) {
+					start, err = pw.Write(line[start:])
+
+					if err != nil {
+						pw.CloseWithError(fmt.Errorf("unable to write to pipe: %v", err))
+						return
+					}
+				}
+			}
+
+			if done {
+				break
+			}
+		}
+
+		pw.Close()
+	}()
+
+	dec := json.NewDecoder(pr)
 
 	var j interface{}
-	err = dec.Decode(&j)
-
-	if *fFix {
-		clErr := file.Close()
-		if clErr != nil {
-			f.failf("unable to close: %v", err)
-		}
-	}
-
-	if err != nil {
+	if err := dec.Decode(&j); err != nil {
 		f.failf("does not contain valid JSON: %v", err)
 	}
 
+	// TODO we could optimise this to reuse configs etc?
+	// need to handle errors etc
 	c := deriveConfig(file)
 
 	if *fVerbose {
@@ -150,7 +234,7 @@ func (f *formatter) format() {
 		f.failf("could not be formatted: %v", err)
 	}
 
-	b = append(b, []byte("\n")...)
+	b = append(b, '\n')
 
 	if *fFix {
 		if file == os.Stdin {
@@ -162,12 +246,20 @@ func (f *formatter) format() {
 			f.failf("could not write formatted JSON back to file: %v", err)
 		}
 	} else {
-		if !bytes.Equal(orig, b) {
+		hash := sha1.New()
+		_, err := hash.Write(b)
+		if err != nil {
+			f.failf("could not compute hash of formatted content: %v", err)
+		}
+		if !bytes.Equal(hash.Sum(nil), orig.Sum(nil)) {
 			f.failf("is not well-formatted")
 		}
 	}
+
+	return nil
 }
 
+// TODO this needs tidying up
 func deriveConfig(file *os.File) (res Config) {
 	var err error
 
