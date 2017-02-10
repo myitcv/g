@@ -43,22 +43,43 @@ func (i *multiFlag) String() string {
 }
 
 var (
-	fDeps multiFlag
+	fPkgs  multiFlag
+	fTpkgs multiFlag
 )
 
 func init() {
-	flag.Var(&fDeps, "D", "file listing dependencies; may appear multiple times")
+	flag.Var(&fPkgs, "P", "a file containing package specs (may appear multiple times) that should be installed")
+	flag.Var(&fTpkgs, "T", "a file containing package specs that should also, in addition to being installed,\n\talso have their tests type-checked (may appear multiple times)")
+}
+
+func usage() {
+	fmt.Fprintf(os.Stderr, `
+%v - install and type check packages and their tests
+
+Usage:
+
+  gai [-P <file1>] [-T <file2>] <package specs>...
+
+  Package specs provided as arguments will be treated as if supplied via a -T flag.
+
+Flags:
+
+`, os.Args[0])
+	flag.PrintDefaults()
+	os.Exit(0)
 }
 
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix("gai: ")
+
+	flag.Usage = usage
 	flag.Parse()
 
 	defer func() {
-		// if err, ok := recover().(error); ok {
-		// 	log.Fatalln(err)
-		// }
+		if err, ok := recover().(error); ok {
+			log.Fatalln(err)
+		}
 	}()
 
 	wd, err := os.Getwd()
@@ -66,22 +87,27 @@ func main() {
 		fatalf("could not get working directory: %v", err)
 	}
 
-	fArgs := flag.Args()
-	specs := make([]string, len(fArgs))
+	var specs []string
+	tspecs := make([]string, len(flag.Args()))
 
-	copy(specs, fArgs)
+	copy(tspecs, flag.Args())
 
-	for _, fn := range fDeps {
+	for _, fn := range fPkgs {
 		specs = append(specs, readLines(fn)...)
 	}
 
-	pkgs := gotool.ImportPaths(specs)
-
-	if len(pkgs) == 0 {
-		fatalf("could not resolve any import paths from %v", specs)
+	for _, fn := range fTpkgs {
+		tspecs = append(tspecs, readLines(fn)...)
 	}
 
-	pkgs, roots, all := buildDeps(pkgs)
+	specs = gotool.ImportPaths(specs)
+	tspecs = gotool.ImportPaths(tspecs)
+
+	if len(specs) == 0 && len(tspecs) == 0 {
+		fatalf("nothing to do; no specs provided?")
+	}
+
+	roots, all := buildDeps(specs, tspecs)
 
 	allFlat := make([]string, 0, len(all))
 	for k := range all {
@@ -146,17 +172,23 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	togotype := make(map[string]bool)
-	for _, v := range pkgs {
-		togotype[v] = true
-	}
+	togotype := make(map[*depPkg]struct{})
 	for _, v := range failedInstalls {
-		togotype[v] = true
+		pkg, ok := all[v]
+
+		if !ok {
+			fatalf("failed install %v did not resolve to a package", pkg)
+		}
+
+		togotype[pkg] = struct{}{}
+	}
+	for _, v := range all {
+		if v.test {
+			togotype[v] = struct{}{}
+		}
 	}
 
-	for ip := range togotype {
-
-		v := all[ip]
+	for v := range togotype {
 
 		if v.buildStatus == statusDepFailed {
 			continue
@@ -175,9 +207,15 @@ func main() {
 
 		wg.Add(1)
 
-		go func(ip, dir string) {
+		go func(ip, dir string, test bool) {
 			out := ""
-			r := goDo([]string{dir}, "gotype", "-a")
+			var args []string
+
+			if test {
+				args = append(args, "-a")
+			}
+
+			r := goDo([]string{dir}, "gotype", args...)
 
 			// sort the lines
 			splits := make(linesByNumber, len(r))
@@ -198,7 +236,7 @@ func main() {
 			res <- out
 			wg.Done()
 
-		}(v.ip, rd)
+		}(v.pkg.ImportPath, rd, v.test)
 
 		if v.buildStatus == statusPassed {
 			for d := range v.rdeps {
@@ -235,81 +273,100 @@ const (
 )
 
 type depPkg struct {
-	ip string
-
 	pkg         *build.Package
 	buildStatus status
+	test        bool
 
 	deps  map[*depPkg]struct{}
 	rdeps map[*depPkg]struct{}
 }
 
-func newDepPkg(ip string) *depPkg {
+func newDepPkg(pkg *build.Package, test bool) *depPkg {
 	return &depPkg{
-		ip:    ip,
+		pkg:  pkg,
+		test: test,
+
 		deps:  make(map[*depPkg]struct{}),
 		rdeps: make(map[*depPkg]struct{}),
 	}
 }
 
-func buildDeps(specs []string) ([]string, []*depPkg, map[string]*depPkg) {
-	var pNames []string
-	var nonCore []*depPkg
+func buildDeps(specs []string, tspecs []string) ([]*depPkg, map[string]*depPkg) {
+	// toDo represents the list of package whose imports (and testimports) we need to walk
+	toDo := make([]*depPkg, 0, len(specs)+len(tspecs))
 	seen := make(map[string]*depPkg)
-	toDo := make([]*depPkg, 0, len(specs))
 
 	wd, err := os.Getwd()
 	if err != nil {
 		fatalf("could not get working directory: %v", err)
 	}
 
-	for _, v := range specs {
-
-		pkg, err := build.Import(v, wd, 0)
-		if err != nil {
-			fatalf("could not import %v: %v", v, err)
+	loadPkg := func(s string, test bool) (*depPkg, bool) {
+		if pkg, ok := seen[s]; ok {
+			return pkg, false
 		}
-		p := newDepPkg(pkg.ImportPath)
-		p.pkg = pkg
 
-		toDo = append(toDo, p)
-		seen[pkg.ImportPath] = p
-		pNames = append(pNames, pkg.ImportPath)
+		bpkg, err := build.Import(s, wd, 0)
+		if err != nil {
+			fatalf("could not import %v relative to %v: %v", s, wd, err)
+		}
+
+		if pkg, ok := seen[bpkg.ImportPath]; ok {
+			return pkg, false
+		}
+
+		res := newDepPkg(bpkg, test)
+
+		seen[s] = res
+		seen[bpkg.ImportPath] = res
+
+		return res, true
 	}
 
-	var p *depPkg
+	for _, v := range tspecs {
+		if pkg, isnew := loadPkg(v, true); isnew {
+			toDo = append(toDo, pkg)
+		}
+	}
+
+	for _, v := range specs {
+		if pkg, isnew := loadPkg(v, false); isnew {
+			toDo = append(toDo, pkg)
+		}
+	}
+
+	var nonCore []*depPkg
+
+	// clearly this only supports us "injecting" packages that need TestImports
+	// to be walked at the beginning
+
+	var pkg *depPkg
 
 	for len(toDo) != 0 {
-		p, toDo = toDo[0], toDo[1:]
+		pkg, toDo = toDo[0], toDo[1:]
 
-		if p.pkg == nil {
-			pkg, err := build.Import(p.ip, wd, 0)
-			if err != nil {
-				fatalf("could not import %v: %v", p.ip, err)
-			}
-			p.pkg = pkg
-		}
-
-		if p.pkg.Goroot {
+		if pkg.pkg.Goroot {
 			continue
 		}
 
-		nonCore = append(nonCore, p)
+		nonCore = append(nonCore, pkg)
 
 		var toCheck []string
-		toCheck = append(toCheck, p.pkg.Imports...)
-		toCheck = append(toCheck, p.pkg.TestImports...)
+		toCheck = append(toCheck, pkg.pkg.Imports...)
 
-		for _, i := range toCheck {
-			t, ok := seen[i]
-			if !ok {
-				t = newDepPkg(i)
-				toDo = append(toDo, t)
-				seen[i] = t
+		if pkg.test {
+			toCheck = append(toCheck, pkg.pkg.TestImports...)
+		}
+
+		for _, v := range toCheck {
+			dpkg, isnew := loadPkg(v, false)
+
+			if isnew {
+				toDo = append(toDo, dpkg)
 			}
 
-			p.deps[t] = struct{}{}
-			t.rdeps[p] = struct{}{}
+			pkg.deps[dpkg] = struct{}{}
+			dpkg.rdeps[pkg] = struct{}{}
 		}
 	}
 
@@ -330,7 +387,7 @@ func buildDeps(specs []string) ([]string, []*depPkg, map[string]*depPkg) {
 		}
 	}
 
-	return pNames, roots, seen
+	return roots, seen
 }
 
 func goDo(specs []string, c string, args ...string) []string {
