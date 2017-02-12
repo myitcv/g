@@ -1,8 +1,6 @@
 // Copyright (c) 2016 Paul Jolly <paul@myitcv.org.uk>, all rights reserved.
 // Use of this document is governed by a license found in the LICENSE document.
 
-// +build linux
-
 package main
 
 import (
@@ -18,7 +16,6 @@ import (
 
 	fsnotify "gopkg.in/fsnotify.v1"
 
-	"github.com/juju/errgo"
 	"github.com/kr/fs"
 )
 
@@ -131,7 +128,7 @@ func newWatcher() (*watcher, error) {
 	res := &watcher{}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, errgo.NoteMask(err, "Could not create a watcher")
+		return nil, fmt.Errorf("could not create a watcher: %v", err)
 	}
 	res.iwatcher = w
 	return res, nil
@@ -140,7 +137,7 @@ func newWatcher() (*watcher, error) {
 func (w *watcher) close() error {
 	err := w.iwatcher.Close()
 	if err != nil {
-		return errgo.NoteMask(err, "Could not close inotify watcher")
+		return fmt.Errorf("could not close watcher: %v", err)
 	}
 	return nil
 }
@@ -262,8 +259,7 @@ func (w *watcher) commandLoop() chan struct{} {
 	}
 
 	go func() {
-		args := []string{"-O", "globstar", "-c", "--"}
-		args = append(args, w.command...)
+		args := []string{"-O", "globstar", "-c", "--", strings.Join(w.command, " ")}
 		var command *exec.Cmd
 		cmdDone := make(chan struct{})
 
