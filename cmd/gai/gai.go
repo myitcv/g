@@ -107,11 +107,12 @@ func main() {
 		fatalf("nothing to do; no specs provided?")
 	}
 
-	roots, all := buildDeps(specs, tspecs)
+	roots, nonCore, all := buildDeps(specs, tspecs)
 
-	allFlat := make([]string, 0, len(all))
-	for k := range all {
-		allFlat = append(allFlat, k)
+	nonCorePkgs := make([]string, len(nonCore))
+
+	for i, v := range nonCore {
+		nonCorePkgs[i] = v.pkg.ImportPath
 	}
 
 	getPkgFails := func(vs []string) []string {
@@ -127,7 +128,7 @@ func main() {
 
 	var failWork []*depPkg
 
-	failedInstalls := getPkgFails(goDo(allFlat, "go", "install"))
+	failedInstalls := getPkgFails(goDo(nonCorePkgs, "go", "install"))
 	for _, v := range failedInstalls {
 		p := all[v]
 
@@ -291,7 +292,7 @@ func newDepPkg(pkg *build.Package, test bool) *depPkg {
 	}
 }
 
-func buildDeps(specs []string, tspecs []string) ([]*depPkg, map[string]*depPkg) {
+func buildDeps(specs []string, tspecs []string) ([]*depPkg, []*depPkg, map[string]*depPkg) {
 	// toDo represents the list of package whose imports (and testimports) we need to walk
 	toDo := make([]*depPkg, 0, len(specs)+len(tspecs))
 	seen := make(map[string]*depPkg)
@@ -387,7 +388,7 @@ func buildDeps(specs []string, tspecs []string) ([]*depPkg, map[string]*depPkg) 
 		}
 	}
 
-	return roots, seen
+	return roots, nonCore, seen
 }
 
 func goDo(specs []string, c string, args ...string) []string {
