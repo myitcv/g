@@ -5,7 +5,13 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"go/ast"
 	"go/build"
+	"go/importer"
+	"go/parser"
+	"go/scanner"
+	"go/token"
+	"go/types"
 	"log"
 	"os"
 	"os/exec"
@@ -30,6 +36,22 @@ const (
 var (
 	fDebug = flag.Bool("v", false, "be very verbose about what gai is doing")
 )
+
+var (
+	sizes types.Sizes
+)
+
+func initSizes() {
+	wordSize := 8
+	maxAlign := 8
+	switch build.Default.GOARCH {
+	case "386", "arm":
+		wordSize = 4
+		maxAlign = 4
+		// add more cases as needed
+	}
+	sizes = &types.StdSizes{WordSize: int64(wordSize), MaxAlign: int64(maxAlign)}
+}
 
 type multiFlag []string
 
@@ -81,6 +103,8 @@ func main() {
 			log.Fatalln(err)
 		}
 	}()
+
+	initSizes()
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -208,7 +232,7 @@ func main() {
 
 		wg.Add(1)
 
-		go func(ip, dir string, test bool) {
+		go func(pkg *build.Package, dir string, test bool) {
 			out := ""
 			var args []string
 
@@ -216,7 +240,8 @@ func main() {
 				args = append(args, "-a")
 			}
 
-			r := goDo([]string{dir}, "gotype", args...)
+			// r := goDo([]string{dir}, "gotype", args...)
+			r := checkPkgFiles(pkg)
 
 			// sort the lines
 			splits := make(linesByNumber, len(r))
@@ -231,13 +256,13 @@ func main() {
 			}
 
 			if len(r) > 0 {
-				out = fmt.Sprintf("# %v\n%v\n", ip, strings.Join(r, "\n"))
+				out = fmt.Sprintf("# %v\n%v\n", pkg.ImportPath, strings.Join(r, "\n"))
 			}
 
 			res <- out
 			wg.Done()
 
-		}(v.pkg.ImportPath, rd, v.test)
+		}(v.pkg, rd, v.test)
 
 		if v.buildStatus == statusPassed {
 			for d := range v.rdeps {
@@ -263,6 +288,103 @@ func main() {
 	if gotFail {
 		os.Exit(1)
 	}
+}
+
+func parse(fset *token.FileSet, filename string) *ast.File {
+	file, err := parser.ParseFile(fset, filename, nil, parser.AllErrors)
+	if err != nil {
+		fatalf("failed to parse %v: %v", filename, err)
+	}
+	return file
+}
+
+func parseFiles(fset *token.FileSet, filenames []string) ([]*ast.File, error) {
+	files := make([]*ast.File, len(filenames))
+
+	out := make(chan *ast.File)
+	for _, filename := range filenames {
+		go func(filename string) {
+			out <- parse(fset, filename)
+		}(filename)
+	}
+
+	for i := range filenames {
+		res := <-out
+		files[i] = res
+	}
+
+	return files, nil
+}
+
+func parseBuildPkg(fset *token.FileSet, pkg *build.Package) (files, xfiles []*ast.File) {
+	filenames := append(pkg.GoFiles, pkg.TestGoFiles...)
+	for i, fn := range filenames {
+		filenames[i] = filepath.Join(pkg.Dir, fn)
+	}
+	xfilenames := pkg.XTestGoFiles
+	for i, fn := range xfilenames {
+		xfilenames[i] = filepath.Join(pkg.Dir, fn)
+	}
+
+	// TODO this could be made concurrent
+	files, err := parseFiles(fset, filenames)
+	if err != nil {
+		fatalf("failed to parse package files in %v: %v", pkg.Dir, err)
+	}
+	xfiles, err = parseFiles(fset, xfilenames)
+	if err != nil {
+		fatalf("failed to parse xtest package files in %v: %v", pkg.Dir, err)
+	}
+
+	return
+}
+
+func checkPkgFiles(pkg *build.Package) (errors []string) {
+	fset := token.NewFileSet()
+
+	errorCount := 0
+
+	report := func(err error) {
+		errors = append(errors, err.Error())
+		if list, ok := err.(scanner.ErrorList); ok {
+			errorCount += len(list)
+			return
+		}
+		errorCount++
+	}
+	type bailout struct{}
+	conf := types.Config{
+		FakeImportC: true,
+		Error: func(err error) {
+			if errorCount >= 10 {
+				panic(bailout{})
+			}
+			report(err)
+		},
+		Importer: importer.For("gc", nil),
+		Sizes:    sizes,
+	}
+
+	files, xfiles := parseBuildPkg(fset, pkg)
+
+	for _, files := range [][]*ast.File{files, xfiles} {
+
+		// infof("type checking %v in %v\n", pn, pkg.Dir)
+
+		func() {
+			defer func() {
+				switch err := recover().(type) {
+				case nil, bailout:
+					// normal return or early exit
+				default:
+					fatalf("unable to type check package %v: %v", pkg.Dir, err)
+				}
+			}()
+			conf.Check(pkg.Dir, fset, files, nil)
+		}()
+	}
+
+	return
 }
 
 type status uint
@@ -352,11 +474,11 @@ func buildDeps(specs []string, tspecs []string) ([]*depPkg, []*depPkg, map[strin
 
 		nonCore = append(nonCore, pkg)
 
-		var toCheck []string
-		toCheck = append(toCheck, pkg.pkg.Imports...)
+		toCheck := pkg.pkg.Imports
 
 		if pkg.test {
 			toCheck = append(toCheck, pkg.pkg.TestImports...)
+			toCheck = append(toCheck, pkg.pkg.XTestImports...)
 		}
 
 		for _, v := range toCheck {
