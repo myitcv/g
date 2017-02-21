@@ -208,7 +208,18 @@ func (w *watcher) watchOnce(p string) {
 }
 
 func (w *watcher) watchLoop(p string) {
-	w.recursiveWatchAdd(p)
+	fi, err := os.Stat(p)
+	if err != nil {
+		panic(err)
+	}
+	if fi.IsDir() {
+		w.recursiveWatchAdd(p)
+	} else {
+		err = w.iwatcher.Add(p)
+		if err != nil {
+			panic(err)
+		}
+	}
 
 	comm := w.commandLoop()
 
