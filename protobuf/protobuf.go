@@ -1,4 +1,4 @@
-package protobuf
+package protobuf // import "myitcv.io/g/protobuf"
 
 import "fmt"
 

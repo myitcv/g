@@ -1,5 +1,5 @@
 // concsh allows you to concurrently run commands from your shell.
-package main
+package main // import "myitcv.io/g/cmd/concsh"
 
 import (
 	"bufio"
