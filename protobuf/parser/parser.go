@@ -16,7 +16,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/myitcv/g/protobuf/ast"
+	"myitcv.io/g/protobuf/ast"
 )
 
 const debugging = false

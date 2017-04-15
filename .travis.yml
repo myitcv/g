@@ -7,6 +7,8 @@ cache:
   directories:
     - $HOME/cache
 
+go_import_path: myitcv.io/g
+
 install:
   - echo "Nothing to do"
 

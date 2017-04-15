@@ -1,1 +1,1 @@
-## `github.com/myitcv/g`
+## `myitcv.io/g`

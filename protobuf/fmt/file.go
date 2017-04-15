@@ -6,7 +6,7 @@ package fmt
 import (
 	"strings"
 
-	"github.com/myitcv/g/protobuf/ast"
+	"myitcv.io/g/protobuf/ast"
 )
 
 // TODO
