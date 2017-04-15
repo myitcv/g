@@ -1,5 +1,5 @@
 // mdreplace is a tool for automating the maintenance of markdown files
-package main
+package main // import "myitcv.io/g/cmd/mdreplace"
 
 import (
 	"flag"

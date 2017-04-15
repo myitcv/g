@@ -4,7 +4,7 @@
 /*
 Package gendesc generates descriptor protos from an AST.
 */
-package gendesc
+package gendesc // import "myitcv.io/g/protobuf/gendesc"
 
 import (
 	"fmt"
