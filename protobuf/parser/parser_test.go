@@ -8,8 +8,8 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	pb "github.com/golang/protobuf/protoc-gen-go/descriptor"
-	"github.com/myitcv/g/protobuf/ast"
-	"github.com/myitcv/g/protobuf/gendesc"
+	"myitcv.io/g/protobuf/ast"
+	"myitcv.io/g/protobuf/gendesc"
 )
 
 // tryParse attempts to parse the input, and verifies that it matches

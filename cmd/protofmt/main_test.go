@@ -12,7 +12,7 @@ import (
 	"os/exec"
 	"testing"
 
-	protofmt "github.com/myitcv/g/protobuf/fmt"
+	protofmt "myitcv.io/g/protobuf/fmt"
 
 	. "gopkg.in/check.v1"
 )

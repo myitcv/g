@@ -14,7 +14,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	pb "github.com/golang/protobuf/protoc-gen-go/descriptor"
-	"github.com/myitcv/g/protobuf/ast"
+	"myitcv.io/g/protobuf/ast"
 )
 
 func Generate(fs *ast.FileSet) (*pb.FileDescriptorSet, error) {

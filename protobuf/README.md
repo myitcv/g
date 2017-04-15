@@ -1,4 +1,4 @@
-# `github.com/myitcv/protobuf`
+# `myitcv.io/g/protobuf`
 
 Package protobuf implements a parser for [Google Protocol
 Buffers](https://developers.google.com/protocol-buffers/?hl=en) `v2` and `v3` definition files.

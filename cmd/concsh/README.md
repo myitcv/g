@@ -1,11 +1,11 @@
 ### `concsh`
 
-<!-- REPLACE: go list -f '{{.Doc}}' github.com/myitcv/g/cmd/concsh -->
+<!-- REPLACE: go list -f '{{.Doc}}' myitcv.io/g/cmd/concsh -->
 `concsh` allows you to concurrently run commands from your shell.
 <!-- END -->
 
 ```bash
-go get github.com/myitcv/g/cmd/concsh
+go get myitcv.io/g/cmd/concsh
 ```
 
 ### Usage
@@ -28,7 +28,7 @@ exit codes otherwise
 ### Example
 
 ```bash
-x=$(go list -f '{{.Dir}}' github.com/myitcv/g/cmd/concsh)/example
+x=$(go list -f '{{.Dir}}' myitcv.io/g/cmd/concsh)/example
 concsh -- $x/timer.sh 1 --- $x/timer.sh 2 --- $x/timer.sh 3 --- $x/timer.sh 4 --- $x/timer.sh 5
 ```
 

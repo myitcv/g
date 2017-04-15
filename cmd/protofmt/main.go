@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/myitcv/g/protobuf"
-	protofmt "github.com/myitcv/g/protobuf/fmt"
+	"myitcv.io/g/protobuf"
+	protofmt "myitcv.io/g/protobuf/fmt"
 )
 
 var (
