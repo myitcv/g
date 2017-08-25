@@ -21,8 +21,6 @@ import (
 //
 // there is no shell evaluation of arguments
 //
-// TODO add ability to limit concurrency (probably not worth it for things like git which are most
-// likely to be network-bounded)
 // TODO could support shell evalulation of lines (command line version already covered?)?
 // TODO improve panics; some situations we might be able to better detect/handle?
 // TODO add some mode whereby commands are executed only if all commands are valid (means
@@ -40,6 +38,12 @@ type outLine struct {
 	line string
 }
 
+var (
+	fConcurrency = flag.Uint("conc", 0, "define how many commands can be running at any given time; 0 = no limit; default = 0")
+
+	limiter chan struct{}
+)
+
 func main() {
 	log.SetOutput(os.Stderr)
 	log.SetPrefix(os.Args[0] + ": ")
@@ -48,13 +52,59 @@ func main() {
 
 	flag.Parse()
 
+	if *fConcurrency > 0 {
+		limiter = make(chan struct{}, *fConcurrency)
+
+		for i := uint(0); i < *fConcurrency; i++ {
+			go func() {
+				limiter <- struct{}{}
+			}()
+		}
+	}
+
 	var argSets [][]string
 
-	s := 0
-	nr := 0
+	exit := make(chan struct{})
+	done := make(chan struct{})
+	counter := make(chan struct{})
 	results := make(chan result)
 
-	if len(os.Args) == 1 {
+	go func() {
+		exitCode := 0
+		nr := 0
+		finished := false
+
+	Done:
+		for {
+			select {
+			case <-counter:
+				nr++
+			case res := <-results:
+				for _, v := range res.lines {
+					if v.err {
+						fmt.Fprint(os.Stderr, v.line)
+					} else {
+						fmt.Fprint(os.Stdout, v.line)
+					}
+				}
+
+				if res.exitCode != 0 {
+					exitCode = res.exitCode
+				}
+
+				nr--
+				if finished && nr == 0 {
+					break Done
+				}
+			case <-done:
+				finished = true
+			}
+		}
+
+		os.Exit(exitCode)
+	}()
+
+	if len(flag.Args()) == 0 {
 		// read from stdin
 		sc := bufio.NewScanner(os.Stdin)
 		line := 1
@@ -65,23 +115,16 @@ func main() {
 				infof("could not parse command on line %v: %v", line, err)
 			}
 
-			nr += runCmd(args, results)
+			runCmd(args, counter, results)
 			line++
 		}
 		if err := sc.Err(); err != nil {
 			fatalf("unable to read from stdin: %v", err)
 		}
 	} else {
-		for i, v := range os.Args {
-			if v == "--" {
-				s = i
-				break
-			}
-		}
-
 		var args []string
 
-		for _, v := range os.Args[s+1:] {
+		for _, v := range flag.Args() {
 			if v == "---" {
 				argSets = append(argSets, args)
 				args = nil
@@ -93,36 +136,13 @@ func main() {
 		// in case we did not have a final ---
 		argSets = append(argSets, args)
 
-	}
-	// nr += runCmd(args, results)
-	// if nr == 0 {
-	// 	fmt.Println("No commands to execute")
-	// 	return
-	// }
-
-	exitCode := 0
-
-	for res := range results {
-
-		for _, v := range res.lines {
-			if v.err {
-				fmt.Fprint(os.Stderr, v.line)
-			} else {
-				fmt.Fprint(os.Stdout, v.line)
-			}
-		}
-
-		if res.exitCode != 0 {
-			exitCode = res.exitCode
-		}
-
-		nr--
-		if nr == 0 {
-			break
+		for _, ag := range argSets {
+			runCmd(ag, counter, results)
 		}
 	}
 
-	os.Exit(exitCode)
+	done <- struct{}{}
+	<-exit
 }
 
 func usage() {
@@ -138,11 +158,14 @@ In the case no arguments are provided, concsh will read the commands to execute 
 	flag.PrintDefaults()
 }
 
-func runCmd(args []string, results chan result) int {
+func runCmd(args []string, counter chan struct{}, results chan result) int {
 	res := 0
 
 	if len(args) > 0 {
-		res = 1
+		if limiter != nil {
+			<-limiter
+		}
+		counter <- struct{}{}
 		go runCmdImpl(args, results)
 	}
 
@@ -275,6 +298,10 @@ func runCmdImpl(args []string, results chan result) {
 	}
 
 	results <- res
+
+	if limiter != nil {
+		limiter <- struct{}{}
+	}
 }
 
 func read(in io.ReadCloser, res chan string, done chan struct{}) {
