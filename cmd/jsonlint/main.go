@@ -24,6 +24,7 @@ var (
 	fFix     = flag.Bool("f", false, "fix the files passed as arguments")
 	fIndent  = flag.String("indent", "\t", "the indent string")
 	fPrefix  = flag.String("prefix", "", "the prefix string")
+	fConc    = flag.Uint("conc", uint(runtime.NumCPU()), "the number of concurrent formatters; defaults to number of cores")
 )
 
 type Config struct {
@@ -55,9 +56,9 @@ func main() {
 		files = []string{os.Stdin.Name()}
 	}
 
-	nf := runtime.NumCPU()
+	nf := int(*fConc)
 
-	formatters := make(chan *formatter, runtime.NumCPU())
+	formatters := make(chan *formatter, nf)
 
 	for i := 0; i < nf; i++ {
 		formatters <- &formatter{}
