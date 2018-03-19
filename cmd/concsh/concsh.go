@@ -315,6 +315,8 @@ func read(in io.ReadCloser, res chan string, done chan struct{}) {
 				if line != "" {
 					res <- line + "\n"
 				}
+			} else {
+				panic(err)
 			}
 
 			// notice we are ignoring io errors... because any other
