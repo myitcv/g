@@ -4,8 +4,10 @@
 package main // import "myitcv.io/g/cmd/watcher"
 
 import (
+	"crypto/sha256"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -21,16 +23,20 @@ import (
 
 // TODO implement timeout for killing long-running process
 
-var fIgnorePaths ignorePaths
+var (
+	fIgnorePaths ignorePaths
 
-var fQuiet = flag.Duration("q", time.Millisecond, "the duration of the 'quiet' window; format is 1s, 10us etc. Min 1 millisecond")
-var fPath = flag.String("p", "", "the path to watch; default is CWD [*]")
-var fFollow = flag.Bool("f", false, "whether to follow symlinks or not (recursively) [*]")
-var fDie = flag.Bool("d", false, "die on first notification; only consider -p and -f flags")
-var fClearScreen = flag.Bool("c", true, "clear the screen before running the command")
-var fInitial = flag.Bool("i", true, "run command at time zero; only applies when -d not supplied")
-var fTimeout = flag.Duration("t", 0, "the timeout after which a process is killed; not valid with -k")
-var fKill = flag.Bool("k", true, "whether to kill the running command on a new notification; ensures contiguous command calls")
+	fQuiet       = flag.Duration("q", time.Millisecond, "the duration of the 'quiet' window; format is 1s, 10us etc. Min 1 millisecond")
+	fPath        = flag.String("p", "", "the path to watch; default is CWD [*]")
+	fFollow      = flag.Bool("f", false, "whether to follow symlinks or not (recursively) [*]")
+	fDie         = flag.Bool("d", false, "die on first notification; only consider -p and -f flags")
+	fClearScreen = flag.Bool("c", false, "do not clear the screen before running the command")
+	fInitial     = flag.Bool("i", true, "run command at time zero; only applies when -d not supplied")
+	fTimeout     = flag.Duration("t", 0, "the timeout after which a process is killed; not valid with -k")
+	fKill        = flag.Bool("k", true, "whether to kill the running command on a new notification; ensures contiguous command calls")
+
+	hashCache = make(map[string]string)
+)
 
 const (
 	GitDir = ".git"
@@ -101,7 +107,7 @@ func main() {
 	w.quiet = *fQuiet
 	w.initial = *fInitial
 	w.command = flag.Args()
-	w.clearScreen = *fClearScreen
+	w.clearScreen = !*fClearScreen
 	w.ignorePaths = append(fIgnorePaths, GloballyIgnoredDirs...)
 	w.absPath = path
 
@@ -145,6 +151,18 @@ func (w *watcher) close() error {
 func (w *watcher) recursiveWatchAdd(p string) error {
 	// p is a path; may or may not be a directory
 
+	fi, err := os.Stat(p)
+	if err != nil {
+		panic(err)
+	}
+	if !fi.IsDir() {
+		hashCache[p] = hash(p)
+		if err := w.iwatcher.Add(p); err != nil {
+			panic(err)
+		}
+		return nil
+	}
+
 	walker := fs.Walk(p)
 WalkLoop:
 	for walker.Step() {
@@ -153,6 +171,8 @@ WalkLoop:
 			continue
 		}
 		s := walker.Stat()
+
+		hashCache[walker.Path()] = hash(walker.Path())
 
 		if s.IsDir() {
 
@@ -174,8 +194,11 @@ WalkLoop:
 					}
 				}
 			}
-			err := w.iwatcher.Add(walker.Path())
-			if err != nil {
+			if err := w.iwatcher.Add(walker.Path()); err != nil {
+				// TODO anything better to do that just swallow it?
+			}
+		} else {
+			if err := w.iwatcher.Add(walker.Path()); err != nil {
 				// TODO anything better to do that just swallow it?
 			}
 		}
@@ -207,24 +230,47 @@ func (w *watcher) watchOnce(p string) {
 	os.Exit(retVal)
 }
 
-func (w *watcher) watchLoop(p string) {
-	fi, err := os.Stat(p)
+func hash(fn string) string {
+	h := sha256.New()
+
+	fi, err := os.Stat(fn)
 	if err != nil {
-		panic(err)
+		log.Fatalf("failed to stat %v for hashing: %v", fn, err)
 	}
+
+	f, err := os.Open(fn)
+	if err != nil {
+		log.Fatalf("failed to open %v for hashing: %v", fn, err)
+	}
+
+	defer f.Close()
+
 	if fi.IsDir() {
-		w.recursiveWatchAdd(p)
-	} else {
-		err = w.iwatcher.Add(p)
+		ns, err := f.Readdirnames(0)
 		if err != nil {
-			panic(err)
+			log.Fatalf("failed to read dir contents from %v: %v", fn, err)
+		}
+
+		for _, e := range ns {
+			h.Write([]byte(e))
+		}
+	} else {
+		if _, err := io.Copy(h, f); err != nil {
+			log.Fatalf("failed to hash %v: %v", fn, err)
 		}
 	}
+
+	return string(h.Sum(nil))
+}
+
+func (w *watcher) watchLoop(p string) {
+	w.recursiveWatchAdd(p)
 
 	comm := w.commandLoop()
 
 	var timeout <-chan time.Time
 
+Loop:
 	for {
 		select {
 		case <-timeout:
@@ -241,18 +287,28 @@ func (w *watcher) watchLoop(p string) {
 				if err != nil {
 					// TODO anything better to do that just swallow it?
 				}
+				continue Loop
 			case fsnotify.Remove, fsnotify.Rename:
 				err := w.recursiveWatchRemove(e.Name)
 				if err != nil {
 					// TODO anything better to do that just swallow it?
 				}
+				continue Loop
 			}
 
-			// whatever the type of event, now time to fire across to the
-			// command goroutine
-			if timeout == nil {
-				timeout = time.After(time.Millisecond * 200)
+			hs := hash(e.Name)
+			ce := hashCache[e.Name]
+
+			if ce != hs {
+				hashCache[e.Name] = hs
+
+				// whatever the type of event, now time to fire across to the
+				// command goroutine
+				if timeout == nil {
+					timeout = time.After(time.Millisecond * 200)
+				}
 			}
+
 		case _ = <-w.iwatcher.Errors:
 			// TODO handle the queue overflow
 		}
