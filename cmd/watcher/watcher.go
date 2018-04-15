@@ -156,10 +156,8 @@ func (w *watcher) recursiveWatchAdd(p string) error {
 		panic(err)
 	}
 	if !fi.IsDir() {
-		hashCache[p] = hash(p)
-		if err := w.iwatcher.Add(p); err != nil {
-			panic(err)
-		}
+		hashCache[p], _ = hash(p)
+		_ = w.iwatcher.Add(p)
 		return nil
 	}
 
@@ -172,7 +170,11 @@ WalkLoop:
 		}
 		s := walker.Stat()
 
-		hashCache[walker.Path()] = hash(walker.Path())
+		if h, err := hash(walker.Path()); err == nil {
+			hashCache[walker.Path()] = h
+		} else {
+			continue
+		}
 
 		if s.IsDir() {
 
@@ -230,17 +232,17 @@ func (w *watcher) watchOnce(p string) {
 	os.Exit(retVal)
 }
 
-func hash(fn string) string {
+func hash(fn string) (string, error) {
 	h := sha256.New()
 
 	fi, err := os.Stat(fn)
 	if err != nil {
-		log.Fatalf("failed to stat %v for hashing: %v", fn, err)
+		return "", fmt.Errorf("failed to stat %v for hashing: %v", fn, err)
 	}
 
 	f, err := os.Open(fn)
 	if err != nil {
-		log.Fatalf("failed to open %v for hashing: %v", fn, err)
+		return "", fmt.Errorf("failed to open %v for hashing: %v", fn, err)
 	}
 
 	defer f.Close()
@@ -248,7 +250,7 @@ func hash(fn string) string {
 	if fi.IsDir() {
 		ns, err := f.Readdirnames(0)
 		if err != nil {
-			log.Fatalf("failed to read dir contents from %v: %v", fn, err)
+			return "", fmt.Errorf("failed to read dir contents from %v: %v", fn, err)
 		}
 
 		for _, e := range ns {
@@ -256,11 +258,11 @@ func hash(fn string) string {
 		}
 	} else {
 		if _, err := io.Copy(h, f); err != nil {
-			log.Fatalf("failed to hash %v: %v", fn, err)
+			return "", fmt.Errorf("failed to hash %v: %v", fn, err)
 		}
 	}
 
-	return string(h.Sum(nil))
+	return string(h.Sum(nil)), nil
 }
 
 func (w *watcher) watchLoop(p string) {
@@ -296,7 +298,10 @@ Loop:
 				continue Loop
 			}
 
-			hs := hash(e.Name)
+			hs, err := hash(e.Name)
+			if err != nil {
+				continue
+			}
 			ce := hashCache[e.Name]
 
 			if ce != hs {
