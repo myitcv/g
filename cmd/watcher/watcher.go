@@ -1,6 +1,7 @@
 // Copyright (c) 2016 Paul Jolly <paul@myitcv.org.uk>, all rights reserved.
 // Use of this document is governed by a license found in the LICENSE document.
 
+// watcher is a Linux-based directory watcher for triggering commands
 package main // import "myitcv.io/g/cmd/watcher"
 
 import (
@@ -9,31 +10,34 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	fsnotify "gopkg.in/fsnotify.v1"
+	fsnotify "gopkg.in/fsnotify/fsnotify.v1"
 
 	"github.com/kr/fs"
 )
 
-// TODO implement timeout for killing long-running process
+// TODO
+// Warning: this code is pretty messy; some of my first Go code
+//
+// * implement timeout for killing long-running process
 
 var (
 	fIgnorePaths ignorePaths
 
-	fQuiet       = flag.Duration("q", time.Millisecond, "the duration of the 'quiet' window; format is 1s, 10us etc. Min 1 millisecond")
-	fPath        = flag.String("p", "", "the path to watch; default is CWD [*]")
-	fFollow      = flag.Bool("f", false, "whether to follow symlinks or not (recursively) [*]")
-	fDie         = flag.Bool("d", false, "die on first notification; only consider -p and -f flags")
-	fClearScreen = flag.Bool("c", false, "do not clear the screen before running the command")
-	fInitial     = flag.Bool("i", true, "run command at time zero; only applies when -d not supplied")
-	fTimeout     = flag.Duration("t", 0, "the timeout after which a process is killed; not valid with -k")
-	fKill        = flag.Bool("k", true, "whether to kill the running command on a new notification; ensures contiguous command calls")
+	fDebug           = flag.Bool("debug", false, "give debug output")
+	fQuiet           = flag.Duration("q", 100*time.Millisecond, "the duration of the 'quiet' window; format is 1s, 10us etc. Min 1 millisecond")
+	fPath            = flag.String("p", "", "the path to watch; default is CWD [*]")
+	fFollow          = flag.Bool("f", false, "whether to follow symlinks or not (recursively) [*]")
+	fDie             = flag.Bool("d", false, "die on first notification; only consider -p and -f flags")
+	fDontClearScreen = flag.Bool("c", false, "do not clear the screen before running the command")
+	fNotInitial      = flag.Bool("i", false, "don't run command at time zero; only applies when -d not supplied")
+	fTimeout         = flag.Duration("t", 0, "the timeout after which a process is killed; not valid with -k")
+	fDontKill        = flag.Bool("k", false, "don't kill the running command on a new notification")
 
 	hashCache = make(map[string]string)
 )
@@ -63,12 +67,16 @@ func showUsage() {
 	fmt.Fprintf(os.Stderr, "Command mode:\n\t%v [-q duration] [-p /path/to/watch] [-i] [-f] [-c] [-k] CMD ARG1 ARG2...\n\nDie mode:\n\t%v -d [-p /path/to/watch] [-f]\n\n", os.Args[0], os.Args[0])
 	flag.PrintDefaults()
 	fmt.Fprintf(os.Stderr, "\nOnly options marked with [*] are valid in die mode\n")
-	os.Exit(1)
 }
 
+//go:generate pkgconcat -out gen_cliflag.go myitcv.io/_tmpls/cliflag
+
 func main() {
-	flag.Usage = showUsage
-	flag.Parse()
+	setupAndParseFlags("")
+
+	if *fDebug {
+		*fDontClearScreen = true
+	}
 
 	path := *fPath
 	if path == "" {
@@ -80,34 +88,34 @@ func main() {
 	}
 	_, err = os.Stat(path)
 	if err != nil {
-		log.Fatalf("Could not stat -p supplied path [%v]: %v\n", path, err)
+		fatalf("Could not stat -p supplied path [%v]: %v\n", path, err)
 	}
 
-	if !*fDie {
+	if *fDie {
 		if *fQuiet < 0 {
-			log.Fatalf("Quiet window duration [%v] must be positive\n", *fQuiet)
+			fatalf("Quiet window duration [%v] must be positive\n", *fQuiet)
 		}
 		if *fTimeout < 0 {
-			log.Fatalf("Command timeout duration [%v] must be positive\n", *fTimeout)
+			fatalf("Command timeout duration [%v] must be positive\n", *fTimeout)
 		}
 	}
 
-	if !*fDie && *fQuiet < time.Millisecond {
+	if *fDie && *fQuiet < time.Millisecond {
 		log.Fatalln("Quiet time period must be at least 1 millisecond")
 	}
 
 	w, err := newWatcher()
 	if err != nil {
-		log.Fatalf("Could not create a watcher: %v\n", err)
+		fatalf("Could not create a watcher: %v\n", err)
 	}
 	defer w.close()
 
-	w.kill = *fKill
+	w.kill = !*fDontKill
 	w.timeout = *fTimeout
 	w.quiet = *fQuiet
-	w.initial = *fInitial
+	w.initial = !*fNotInitial
 	w.command = flag.Args()
-	w.clearScreen = !*fClearScreen
+	w.clearScreen = !*fDontClearScreen
 	w.ignorePaths = append(fIgnorePaths, GloballyIgnoredDirs...)
 	w.absPath = path
 
@@ -148,33 +156,32 @@ func (w *watcher) close() error {
 	return nil
 }
 
-func (w *watcher) recursiveWatchAdd(p string) error {
+func (w *watcher) recursiveWatchAdd(p string) {
 	// p is a path; may or may not be a directory
 
 	fi, err := os.Stat(p)
 	if err != nil {
-		panic(err)
+		debugf("recursiveWatchAdd: os.Stat(%v): %v", p, err)
+		return
 	}
 	if !fi.IsDir() {
-		hashCache[p], _ = hash(p)
-		_ = w.iwatcher.Add(p)
-		return nil
+		hashCache[p] = hash(p)
+		if err := w.iwatcher.Add(p); err != nil {
+			debugf("recursiveWatchAdd: watcher add to %v: %v", p, err)
+		}
+		return
 	}
 
 	walker := fs.Walk(p)
 WalkLoop:
 	for walker.Step() {
 		if err := walker.Err(); err != nil {
-			// TODO better than silently continue?
+			debugf("recursiveWatchAdd: walker.Err: %v", err)
 			continue
 		}
 		s := walker.Stat()
 
-		if h, err := hash(walker.Path()); err == nil {
-			hashCache[walker.Path()] = h
-		} else {
-			continue
-		}
+		hashCache[walker.Path()] = hash(walker.Path())
 
 		if s.IsDir() {
 
@@ -197,15 +204,14 @@ WalkLoop:
 				}
 			}
 			if err := w.iwatcher.Add(walker.Path()); err != nil {
-				// TODO anything better to do that just swallow it?
+				debugf("recursiveWatchAdd: walker add watch to dir member %v: %v", walker.Path(), err)
 			}
 		} else {
 			if err := w.iwatcher.Add(walker.Path()); err != nil {
-				// TODO anything better to do that just swallow it?
+				debugf("recursiveWatchAdd: walker add watch to %v: %v", walker.Path(), err)
 			}
 		}
 	}
-	return nil
 }
 
 func (w *watcher) recursiveWatchRemove(p string) error {
@@ -232,17 +238,19 @@ func (w *watcher) watchOnce(p string) {
 	os.Exit(retVal)
 }
 
-func hash(fn string) (string, error) {
+// in case of any errors simply return "" because we're probably
+// racing with another process
+func hash(fn string) (res string) {
 	h := sha256.New()
 
 	fi, err := os.Stat(fn)
 	if err != nil {
-		return "", fmt.Errorf("failed to stat %v for hashing: %v", fn, err)
+		return
 	}
 
 	f, err := os.Open(fn)
 	if err != nil {
-		return "", fmt.Errorf("failed to open %v for hashing: %v", fn, err)
+		return
 	}
 
 	defer f.Close()
@@ -250,7 +258,7 @@ func hash(fn string) (string, error) {
 	if fi.IsDir() {
 		ns, err := f.Readdirnames(0)
 		if err != nil {
-			return "", fmt.Errorf("failed to read dir contents from %v: %v", fn, err)
+			return
 		}
 
 		for _, e := range ns {
@@ -258,26 +266,80 @@ func hash(fn string) (string, error) {
 		}
 	} else {
 		if _, err := io.Copy(h, f); err != nil {
-			return "", fmt.Errorf("failed to hash %v: %v", fn, err)
+			return
 		}
 	}
 
-	return string(h.Sum(nil)), nil
+	return string(h.Sum(nil))
 }
 
 func (w *watcher) watchLoop(p string) {
 	w.recursiveWatchAdd(p)
 
-	comm := w.commandLoop()
+	workBus := make(chan struct{})
+	eventBus := make(chan fsnotify.Event)
 
-	var timeout <-chan time.Time
+	go w.commandLoop(workBus)
 
-Loop:
+	// buffer
+	go func() {
+		var buffer []fsnotify.Event
+		var backlog []fsnotify.Event
+		var timers []<-chan time.Time
+
+		debugf("buffer loop> initial: %v\n", w.initial)
+
+		if w.initial {
+			// dummy event
+			buffer = append(buffer, fsnotify.Event{})
+			timers = append(timers, time.After(0))
+		}
+
+	Buffer:
+		for {
+			debugln("buffer loop> start")
+			var timeout <-chan time.Time
+			if len(timers) > 0 {
+				debugln("buffer loop> can timeout")
+				timeout = timers[0]
+			}
+
+			var doWork chan struct{}
+			if len(backlog) > 0 {
+				debugln("buffer loop> have backlog")
+				doWork = workBus
+			}
+
+			select {
+			case e := <-eventBus:
+				for _, b := range buffer {
+					if b == e {
+						continue Buffer
+					}
+				}
+				for _, b := range backlog {
+					if b == e {
+						continue Buffer
+					}
+				}
+				buffer = append(buffer, e)
+				timers = append(timers, time.After(w.quiet))
+			case <-timeout:
+				e := buffer[0]
+				buffer = buffer[1:]
+
+				timers = timers[1:]
+				backlog = append(backlog, e)
+			case doWork <- struct{}{}:
+				debugln("buffer loop> sent work")
+				backlog = backlog[1:]
+			}
+		}
+
+	}()
+
 	for {
 		select {
-		case <-timeout:
-			timeout = nil
-			comm <- struct{}{}
 		case e := <-w.iwatcher.Events:
 			// TODO handle the queue overflow... this could happen
 			// if we do get queue overflow, might need to look at putting
@@ -285,33 +347,20 @@ Loop:
 			// removes somehow
 			switch e.Op {
 			case fsnotify.Create:
-				err := w.recursiveWatchAdd(e.Name)
-				if err != nil {
-					// TODO anything better to do that just swallow it?
-				}
-				continue Loop
+				w.recursiveWatchAdd(e.Name)
 			case fsnotify.Remove, fsnotify.Rename:
-				err := w.recursiveWatchRemove(e.Name)
-				if err != nil {
-					// TODO anything better to do that just swallow it?
-				}
-				continue Loop
+				w.recursiveWatchRemove(e.Name)
 			}
 
-			hs, err := hash(e.Name)
-			if err != nil {
-				continue
-			}
+			debugf("event loop> %v for %v\n", e.Op, e.Name)
+
+			hs := hash(e.Name)
 			ce := hashCache[e.Name]
 
 			if ce != hs {
+				debugln("event loop> cache miss")
 				hashCache[e.Name] = hs
-
-				// whatever the type of event, now time to fire across to the
-				// command goroutine
-				if timeout == nil {
-					timeout = time.After(time.Millisecond * 200)
-				}
+				eventBus <- e
 			}
 
 		case _ = <-w.iwatcher.Errors:
@@ -320,72 +369,62 @@ Loop:
 	}
 }
 
-func (w *watcher) commandLoop() chan struct{} {
-	c := make(chan struct{})
-	var t *time.Timer
+func (w *watcher) commandLoop(workBus chan struct{}) {
+	outWorkBus := workBus
+	args := []string{"-O", "globstar", "-c", "--", strings.Join(w.command, " ")}
+	var command *exec.Cmd
+	cmdDone := make(chan struct{})
 
-	if w.initial {
-		t = time.NewTimer(0)
-	} else if w.quiet > 0 {
-		t = time.NewTimer(math.MaxInt64)
+	if w.clearScreen {
+		fmt.Printf("\033[2J")
 	}
 
-	go func() {
-		args := []string{"-O", "globstar", "-c", "--", strings.Join(w.command, " ")}
-		var command *exec.Cmd
-		cmdDone := make(chan struct{})
-
-		runCmd := func() {
-			if command != nil {
-				if !w.kill {
-					// command is still running and we were told not to kill it
-					return
-				}
-				err := command.Process.Kill()
-				if err != nil {
-					// TODO assume this would only fail if the process has
-					// already died... hence silently ignore
-				}
-			}
-			command = exec.Command("bash", args...)
-			command.Stdout = os.Stdout
-			command.Stderr = os.Stderr
-			if w.clearScreen {
-				fmt.Printf("\033[2J")
-			}
-			err := command.Start()
-			if err != nil {
-				log.Fatalf("We could not run the command provided: %v\n", err)
-			}
-			go func(c *exec.Cmd) {
-				err := c.Wait()
-				if err != nil {
-					// TODO we need to handle this better... silently ignore?
-				}
-				cmdDone <- struct{}{}
-			}(command)
+	runCmd := func() {
+		if command != nil {
+			_ = command.Process.Kill()
 		}
-
-		for {
-			select {
-			case <-cmdDone:
-				command = nil
-			case <-t.C:
-				// we had a timeout at the end of a quiet window
-				// we need to call the command (and kill if required)
-				runCmd()
-			case <-c:
-				// we got a tick
-				if w.quiet > 0 {
-					// we need to obey the quiet window
-					t.Reset(w.quiet)
-				} else {
-					// we need to call the command (and kill if required)
-					runCmd()
-				}
-			}
+		if w.clearScreen {
+			fmt.Printf("\033[2J")
 		}
-	}()
+		command = exec.Command("bash", args...)
+		command.Stdout = os.Stdout
+		command.Stderr = os.Stderr
+		if *fDontKill {
+			outWorkBus = nil
+		}
+		debugf("work loop> starting %q\n", strings.Join(args, " "))
+		err := command.Start()
+		if err != nil {
+			fatalf("We could not run the command provided: %v\n", err)
+		}
+		go func(c *exec.Cmd) {
+			_ = c.Wait()
+			debugln("work loop> work done")
+			cmdDone <- struct{}{}
+		}(command)
+	}
 
-	return c
+	for {
+		select {
+		case <-outWorkBus:
+			debugln("work loop> got work")
+			runCmd()
+		case <-cmdDone:
+			outWorkBus = workBus
+			command = nil
+		}
+	}
+}
+
+func debugf(format string, args ...interface{}) {
+	if *fDebug {
+		fmt.Fprintf(os.Stderr, format, args...)
+	}
+}
+
+func debugln(args ...interface{}) {
+	args = append(args, "\n")
+	if *fDebug {
+		fmt.Fprint(os.Stderr, args...)
+	}
 }
