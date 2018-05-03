@@ -5,7 +5,6 @@ package main // import "myitcv.io/g/cmd/newshell"
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,12 +17,15 @@ import (
 	"syscall"
 )
 
-var fP = flag.Int64("p", -1, "the PID of the process to walk for bash sub-processes")
+var fP = flag.Uint64("p", 0, "the PID of the process to walk for bash sub-processes")
 
 const (
+	NodeVersion     = "NODEVERSION"
 	GoVersion       = "GOVERSION"
 	MustChangeToDir = "MUST_CHANGE_TO_DIR"
 )
+
+// this is pretty horrendous code...
 
 func main() {
 	flag.Parse()
@@ -38,40 +40,31 @@ func main() {
 		return
 	}
 
-	if *fP != -1 {
-		// we need to try and find the deepst bash child process of the process
-		// and get the cwd of the process
+	if *fP != 0 {
+		// we need to try and find the first bash child process of the process
+		// and get the cwd of the process. If if is an xterm there will be just
+		// one bash process. If it's chrome, for example, there will be none.
+		// So we literally take the first one if there is one.
 		bestPid := uint64(0)
-		pids := []uint64{uint64(*fP)}
 
-		for len(pids) > 0 {
-			pid := pids[0]
-			pids = pids[1:]
+		cmd := exec.Command("pgrep", "-x", "bash", "-P", strconv.FormatUint(*fP, 10))
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			ws := cmd.ProcessState.Sys().(syscall.WaitStatus)
+			// exit status of 1 simply simply means we matched nothing
+			if ws.ExitStatus() != 1 {
+				log.Fatalf("Could not run pgrep: %v, %v\n", err, output)
+			}
+		}
 
-			cmd := exec.Command("pgrep", "-x", "bash", "-P", strconv.FormatUint(pid, 10))
-			output, err := cmd.CombinedOutput()
+		lines := strings.Split(string(output), "\n")
+
+		if len(lines) > 0 {
+			cPid, err := strconv.ParseUint(lines[0], 10, 64)
 			if err != nil {
-				ws := cmd.ProcessState.Sys().(syscall.WaitStatus)
-				if ws.ExitStatus() != 1 {
-					log.Fatalf("Could not run psgrep: %v, %v\n", err, output)
-				}
+				log.Fatalf("Could not parseint: %v\n", err)
 			}
-
-			lineReader := bytes.NewReader(output)
-			scanner := bufio.NewScanner(lineReader)
-			for scanner.Scan() {
-				// each line is a pid
-				cPid, err := strconv.ParseUint(scanner.Text(), 10, 64)
-				if err != nil {
-					log.Fatalf("Could not parseint: %v\n", err)
-				}
-				bestPid = cPid
-				pids = append(pids, cPid)
-			}
-
-			if err := scanner.Err(); err != nil {
-				log.Fatalf("Could not scan: %v\n", err)
-			}
+			bestPid = cPid
 		}
 
 		if bestPid != 0 {
@@ -87,8 +80,11 @@ func main() {
 			if err == nil {
 				os.Setenv(GoVersion, gv)
 			}
+			nv, err := nodeVersion(bestPid)
+			if err == nil {
+				os.Setenv(NodeVersion, nv)
+			}
 		}
-
 	}
 
 	cmd := flag.Args()
@@ -121,7 +117,35 @@ func goVersion(pid uint64) (string, error) {
 	}
 
 	if root == "/home/myitcv/dev/go" {
-		return "gotip", nil
+		return "tip", nil
+	}
+
+	return "", errors.New("Not mounted or unknown error")
+}
+
+func nodeVersion(pid uint64) (string, error) {
+	mi, err := os.Open(fmt.Sprintf("/proc/%d/mountinfo", pid))
+	if err != nil {
+		return "", err
+	}
+	defer mi.Close()
+
+	root := ""
+
+	sc := bufio.NewScanner(mi)
+
+	for sc.Scan() {
+		line := sc.Text()
+		parts := strings.Fields(line)
+
+		if parts[4] == "/home/myitcv/nodes" {
+			root = parts[3]
+			break
+		}
+	}
+
+	if strings.HasPrefix(root, "/home/myitcv/.nodes/") {
+		return strings.TrimPrefix(root, "/home/myitcv/.nodes/"), nil
 	}
 
 	return "", errors.New("Not mounted or unknown error")
