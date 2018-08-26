@@ -1,30 +1,7 @@
-## `mdreplace`
+## `** myitcv.io/g/cmd/mdreplace **` has moved
 
-<!-- __TEMPLATE: go run *.go -help
-```
-{{ . }}
-```
--->
+`myitcv.io/g/cmd/mdreplace` is now `myitcv.io/cmd/mdreplace`.
 
-```
-<!-- this contains a comment -->
-First example
-<!-- END -->
-```
-<!-- END -->
+`myitcv.io/cmd/mdreplace` can be found at:
 
-<!-- __JSON: go list -json
-{{ .Doc }}
--->
-
-Second example
-<!-- END -->
-
-<!-- __LINES: echo -e "hello\nworld"
-{{ range . }}
-* {{ . }}
-{{ end }}
--->
-
-Third example
-<!-- END -->
+https://github.com/myitcv/x/tree/master/cmd/mdreplace
