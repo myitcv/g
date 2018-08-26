@@ -1,4 +1,7 @@
-### `myitcv.io/g/protobuf/fmt`
+## `** myitcv.io/g/protobuf/fmt **` has moved
 
-This package is not maintained. For a proper formatter of [Protobuf](https://developers.google.com/protocol-buffers/)
-files I suggest you look at `clang-format` which is part of the [LLVW Compiler Infrastructure](http://llvm.org/).
+The repository hosting `myitcv.io/g/protobuf/fmt` has changed.
+
+`myitcv.io/g/protobuf/fmt` can now be found at:
+
+https://github.com/myitcv/x/tree/master/g/protobuf/fmt
